@@ -58,7 +58,7 @@ export async function addFieldAction(): Promise<void> {
     position: nextPos,
   });
   if (error) throw error;
-  revalidatePath('/create');
+  revalidatePath('/create/questionnaire');
 }
 
 const updateSchema = z.object({
@@ -98,7 +98,7 @@ export async function updateFieldAction(formData: FormData): Promise<void> {
     })
     .eq('id', parsed.data.id);
   if (error) throw error;
-  revalidatePath('/create');
+  revalidatePath('/create/questionnaire');
 }
 
 export async function duplicateFieldAction(formData: FormData): Promise<void> {
@@ -130,7 +130,7 @@ export async function duplicateFieldAction(formData: FormData): Promise<void> {
     position: nextPos,
   });
   if (insErr) throw insErr;
-  revalidatePath('/create');
+  revalidatePath('/create/questionnaire');
 }
 
 export async function deleteFieldAction(formData: FormData): Promise<void> {
@@ -143,7 +143,7 @@ export async function deleteFieldAction(formData: FormData): Promise<void> {
     .delete()
     .eq('id', id);
   if (error) throw error;
-  revalidatePath('/create');
+  revalidatePath('/create/questionnaire');
 }
 
 export async function moveFieldAction(formData: FormData): Promise<void> {
@@ -185,7 +185,7 @@ export async function moveFieldAction(formData: FormData): Promise<void> {
     .eq('id', a.id);
   if (e3) throw e3;
 
-  revalidatePath('/create');
+  revalidatePath('/create/questionnaire');
 }
 
 export async function researcherLogoutAction(): Promise<void> {
