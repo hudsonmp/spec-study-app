@@ -42,7 +42,10 @@ export default function FollowAlong({
     );
   }
 
-  const module = content.modules.find((m) => m.id === screen.moduleId);
+  const isGlobalScreen = screen.moduleType === 'global';
+  const module = isGlobalScreen
+    ? null
+    : content.modules.find((m) => m.id === screen.moduleId);
   const script = scripts[screen.key] ?? '';
 
   return (
@@ -95,7 +98,9 @@ export default function FollowAlong({
       >
         <section className="overflow-y-auto p-8">
           <div className="max-w-3xl mx-auto">
-            {module ? (
+            {isGlobalScreen ? (
+              <GlobalScreenPreview screen={screen} />
+            ) : module ? (
               <ScreenPreview screen={screen} module={module} />
             ) : (
               <p className="italic text-[var(--muted)]">(module not found)</p>
@@ -402,4 +407,91 @@ function ClauseLine({
 
 function Unsupported() {
   return <p className="italic text-[var(--muted)]">(unsupported)</p>;
+}
+
+// Pre-study / global screens have no module. Render a faithful mock of what
+// the participant sees (or doesn't yet see) so the researcher reading the
+// script has the right mental model.
+function GlobalScreenPreview({ screen }: { screen: Screen }) {
+  if (screen.kind === 'pre_system') {
+    return (
+      <div className="flex flex-col items-center text-center max-w-xl mx-auto py-12">
+        <h2 className="text-2xl font-medium tracking-tight mb-4">
+          Before the participant joins
+        </h2>
+        <p className="text-[var(--muted)] leading-relaxed">
+          The participant is not yet in the system. Use this script for the
+          opening conversation: introductions, consent, screen-share setup,
+          and a reminder that everything they say will be recorded.
+        </p>
+      </div>
+    );
+  }
+  if (screen.kind === 'login') {
+    return (
+      <div className="space-y-4">
+        <h2 className="text-2xl font-medium tracking-tight">Welcome</h2>
+        <p className="italic text-[var(--muted)]">
+          The participant is on the home screen at <code>/</code>.
+        </p>
+        <div className="border border-[var(--rule)] bg-[var(--panel)] p-6 space-y-3 max-w-md">
+          <div className="flex gap-4 text-sm border-b border-[var(--rule)] pb-2">
+            <span className="font-medium">Register</span>
+            <span className="text-[var(--muted)]">Log in</span>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wider text-[var(--muted)] mb-1">
+              First name
+            </div>
+            <div className="border border-[var(--rule)] px-3 py-2 bg-white text-[var(--muted)] italic text-sm">
+              participant&apos;s first name
+            </div>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wider text-[var(--muted)] mb-1">
+              Email
+            </div>
+            <div className="border border-[var(--rule)] px-3 py-2 bg-white text-[var(--muted)] italic text-sm">
+              participant@example.edu
+            </div>
+          </div>
+          <div className="border border-[var(--foreground)] py-2 text-center text-sm">
+            Register
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (screen.kind === 'questionnaire') {
+    return (
+      <div className="space-y-4">
+        <h2 className="text-2xl font-medium tracking-tight">
+          Welcome, &lt;name&gt;
+        </h2>
+        <p className="italic text-[var(--muted)] text-sm">
+          The participant is on <code>/onboard</code>, filling out the
+          questionnaire. Every field is mandatory; certain answers terminate.
+        </p>
+        <div className="border border-[var(--rule)] bg-[var(--panel)] p-6 space-y-5 max-w-lg">
+          {[
+            'Sample short-text question',
+            'Sample multiple-choice question',
+            'Sample number question',
+          ].map((label) => (
+            <div key={label}>
+              <div className="text-xs uppercase tracking-wider text-[var(--muted)] mb-2">
+                {label}
+                <span className="text-[var(--danger)] ml-1">*</span>
+              </div>
+              <div className="border border-[var(--rule)] px-3 py-2 bg-white h-9" />
+            </div>
+          ))}
+          <div className="border border-[var(--foreground)] py-2 text-center text-sm">
+            Submit
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return <Unsupported />;
 }

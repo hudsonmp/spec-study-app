@@ -1,6 +1,9 @@
 import type { Module, ProjectContent } from '@/lib/types/study';
 
 export type ScreenKind =
+  | 'pre_system'
+  | 'login'
+  | 'questionnaire'
   | 'warmup_intro'
   | 'warmup_body'
   | 'warmup_revealed'
@@ -12,11 +15,16 @@ export type ScreenKind =
   | 'task_scenario_revise'
   | 'retrospective';
 
+// Globals: not tied to any module. moduleId is a sentinel '_global', moduleType
+// widened with 'global' to keep the Screen shape uniform.
+const GLOBAL_KINDS = ['pre_system', 'login', 'questionnaire'] as const;
+type GlobalKind = (typeof GLOBAL_KINDS)[number];
+
 export type Screen = {
   key: string;
   moduleId: string;
-  moduleType: Module['type'];
-  moduleNumber: number;
+  moduleType: Module['type'] | 'global';
+  moduleNumber: number; // 0 for globals
   moduleLabel: string;
   kind: ScreenKind;
   idx?: number;
@@ -43,6 +51,12 @@ function snippet(s: string, max = 80): string {
 
 export function labelFor(kind: ScreenKind): string {
   switch (kind) {
+    case 'pre_system':
+      return 'Pre-system';
+    case 'login':
+      return 'Login / Register';
+    case 'questionnaire':
+      return 'Questionnaire';
     case 'warmup_intro':
       return 'Think-aloud intro';
     case 'warmup_body':
@@ -66,8 +80,28 @@ export function labelFor(kind: ScreenKind): string {
   }
 }
 
+const GLOBAL_SUMMARIES: Record<GlobalKind, string> = {
+  pre_system: 'Before the participant has joined or logged in — consent, setup, expectations.',
+  login: 'Participant is on the / register/login screen.',
+  questionnaire: 'Participant is filling out the /onboard questionnaire.',
+};
+
 export function enumerateScreens(content: ProjectContent): Screen[] {
   const out: Screen[] = [];
+
+  GLOBAL_KINDS.forEach((kind) => {
+    out.push({
+      key: `_global:${kind}`,
+      moduleId: '_global',
+      moduleType: 'global',
+      moduleNumber: 0,
+      moduleLabel: 'Pre-study',
+      kind,
+      label: `Pre-study · ${labelFor(kind)}`,
+      summary: GLOBAL_SUMMARIES[kind],
+    });
+  });
+
   content.modules.forEach((m, mi) => {
     const moduleNumber = mi + 1;
     if (m.type === 'think_aloud_warmup') {
