@@ -373,11 +373,15 @@ function ThinkAloudWarmupRunner({
   save: SaveAdapter;
   onComplete: () => void;
 }) {
+  type Phase = 'intro' | 'body' | 'revealed';
+  const [phase, setPhase] = useState<Phase>('intro');
+
   const [scratch, setScratch] = useLocalString(
     `pf:${projectId}:${m.id}:scratch`,
   );
   const [scratchSavedAt, markScratchSaved] = useSavedAt();
   useDebouncedSave(scratch, (v) => {
+    if (!m.includeScratchPaper) return;
     save.upsert('scratchpad:current', v);
     save.recordEvent('scratchpad_edit', {
       value: v,
@@ -386,13 +390,90 @@ function ThinkAloudWarmupRunner({
     markScratchSaved();
   });
 
-  function next() {
-    save.recordEvent('scratchpad_snapshot', {
-      at: 'warmup_end',
-      value: scratch,
-    });
-    save.recordEvent('step_advance', { from: 'body', to: 'done' });
+  function advanceTo(next: Phase) {
+    save.recordEvent('step_advance', { from: phase, to: next });
+    setPhase(next);
+  }
+
+  function finish() {
+    if (m.includeScratchPaper) {
+      save.recordEvent('scratchpad_snapshot', {
+        at: 'warmup_end',
+        value: scratch,
+      });
+    }
+    save.recordEvent('step_advance', { from: phase, to: 'done' });
     onComplete();
+  }
+
+  if (phase === 'intro') {
+    return (
+      <Centered>
+        <h2 className="text-2xl font-medium tracking-tight mb-4">
+          Think-Aloud Instructions
+        </h2>
+        <p className="text-[var(--muted)] leading-relaxed mb-8">
+          Please do not move on until directed by the researcher.
+        </p>
+        <ContinueButton onClick={() => advanceTo('body')} />
+      </Centered>
+    );
+  }
+
+  const bodyContent = (
+    <section className="flex flex-col gap-4 overflow-y-auto pr-1 h-full">
+      <h2 className="text-2xl font-medium tracking-tight">{m.title}</h2>
+      {m.taskDescription && (
+        <p className="italic text-[var(--muted)] leading-relaxed">
+          {m.taskDescription}
+        </p>
+      )}
+      {m.body && (
+        <p className="leading-relaxed whitespace-pre-wrap">{m.body}</p>
+      )}
+      {phase === 'revealed' && m.revealedTask && (
+        <div className="mt-2 border border-[var(--rule)] bg-[var(--rule-soft)] px-4 py-6 text-center">
+          <p className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-2">
+            Task
+          </p>
+          <p className="font-mono text-3xl tracking-[0.4em]">
+            {m.revealedTask}
+          </p>
+        </div>
+      )}
+      {phase === 'revealed' && (
+        <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
+          Remember to think aloud while you solve this.
+        </p>
+      )}
+      {m.mandatory && phase === 'body' && (
+        <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
+          Please complete this warmup before continuing.
+        </p>
+      )}
+      <div className="mt-auto pt-4 flex gap-3">
+        {phase === 'body' && m.revealedTask && (
+          <button
+            type="button"
+            onClick={() => advanceTo('revealed')}
+            className="border border-[var(--foreground)] px-4 py-2 hover:bg-[var(--foreground)] hover:text-[var(--background)] transition"
+          >
+            Reveal Task
+          </button>
+        )}
+        {phase === 'revealed' && <ContinueButton onClick={finish} />}
+      </div>
+    </section>
+  );
+
+  if (!m.includeScratchPaper) {
+    return (
+      <div className="flex-1 flex justify-center overflow-hidden min-h-0">
+        <div className="max-w-2xl w-full flex flex-col gap-4 overflow-hidden">
+          {bodyContent}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -402,25 +483,7 @@ function ThinkAloudWarmupRunner({
         onChange={setScratch}
         savedAt={scratchSavedAt}
       />
-      <section className="col-span-2 flex flex-col gap-4 overflow-y-auto pr-1">
-        <h2 className="text-2xl font-medium tracking-tight">{m.title}</h2>
-        {m.taskDescription && (
-          <p className="italic text-[var(--muted)] leading-relaxed">
-            {m.taskDescription}
-          </p>
-        )}
-        {m.body && (
-          <p className="leading-relaxed whitespace-pre-wrap">{m.body}</p>
-        )}
-        {m.mandatory && (
-          <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
-            Please complete this warmup before continuing.
-          </p>
-        )}
-        <div className="mt-auto pt-4">
-          <ContinueButton onClick={next} />
-        </div>
-      </section>
+      <div className="col-span-2 flex flex-col">{bodyContent}</div>
     </div>
   );
 }
