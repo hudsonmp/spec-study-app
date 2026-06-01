@@ -471,6 +471,15 @@ function ThinkAloudWarmupEditor({
           onChange={(e) => p((w) => (w.body = e.target.value))}
         />
       </FieldLabel>
+      <FieldLabel label="Revealed task (shown after the participant clicks Reveal Task)">
+        <input
+          type="text"
+          className={inputCls + ' font-mono tracking-widest'}
+          value={m.revealedTask}
+          onChange={(e) => p((w) => (w.revealedTask = e.target.value))}
+          placeholder="e.g. NPEPHA"
+        />
+      </FieldLabel>
       <div className="flex gap-6 text-sm">
         <label className="flex gap-2 items-center text-[var(--muted)]">
           <input
