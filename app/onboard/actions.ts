@@ -41,6 +41,20 @@ export async function submitOnboardingAction(
     .order('position', { ascending: true });
   if (fieldsErr) return { error: 'Could not load fields.' };
 
+  // Completeness guard: reject submissions that are missing any field value.
+  // Runs BEFORE the terminator loop so empty submissions can't bypass screening.
+  const missing: string[] = [];
+  for (const f of fields ?? []) {
+    const vals = formData
+      .getAll(`f_${f.id}`)
+      .map((v) => v.toString().trim())
+      .filter(Boolean);
+    if (vals.length === 0) missing.push(f.field_key);
+  }
+  if (missing.length > 0) {
+    return { error: `Please answer every question. Missing: ${missing.join(', ')}.` };
+  }
+
   // Terminator check: if any submitted value matches a terminator option,
   // delete the user (cascade deletes any responses), destroy the session,
   // and redirect to /terminate. Performed BEFORE writing responses so the
