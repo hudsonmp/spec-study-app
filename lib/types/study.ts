@@ -80,6 +80,7 @@ export type ThinkAloudWarmupModule = {
   title: string;
   taskDescription: string;
   body: string;
+  revealedTask: string;
   includeScratchPaper: boolean;
   mandatory: boolean;
 };
@@ -152,6 +153,7 @@ export function newThinkAloudWarmup(): ThinkAloudWarmupModule {
     title: 'Think-aloud warmup',
     taskDescription: '',
     body: '',
+    revealedTask: '',
     includeScratchPaper: false,
     mandatory: false,
   };

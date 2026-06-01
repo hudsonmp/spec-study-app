@@ -2,6 +2,7 @@ import type {
   ProjectContent,
   Module,
   TaskContent,
+  ThinkAloudWarmupModule,
 } from '@/lib/types/study';
 import { emptyContent } from '@/lib/types/study';
 
@@ -29,7 +30,16 @@ export function migrateContent(input: unknown): ProjectContent {
 
   // New shape: { modules: [...] }
   if (Array.isArray(obj.modules)) {
-    return { modules: obj.modules as Module[] };
+    const modules = (obj.modules as Module[]).map((m) => {
+      if (
+        m.type === 'think_aloud_warmup' &&
+        typeof (m as ThinkAloudWarmupModule).revealedTask !== 'string'
+      ) {
+        return { ...m, revealedTask: '' } as Module;
+      }
+      return m;
+    });
+    return { modules };
   }
 
   // Legacy shape: { templates, domains } — convert each domain to a Task
