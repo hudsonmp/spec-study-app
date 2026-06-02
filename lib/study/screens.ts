@@ -13,6 +13,7 @@ export type ScreenKind =
   | 'warmup_body'
   | 'warmup_revealed'
   // Task warmup example variant (only emitted when task_warmup.example)
+  | 'task_example_intro'
   | 'task_example_initial_spec'
   | 'task_example_scenario_read'
   | 'task_example_scenario_ponder'
@@ -87,6 +88,8 @@ export function labelFor(kind: ScreenKind): string {
       return 'Warmup body';
     case 'warmup_revealed':
       return 'Reveal';
+    case 'task_example_intro':
+      return 'Example · Intro';
     case 'task_example_initial_spec':
       return 'Example · Initial spec';
     case 'task_example_scenario_read':
@@ -210,6 +213,16 @@ export function enumerateScreens(content: ProjectContent): Screen[] {
       // Optional example variant on task_warmup only.
       if (m.type === 'task_warmup' && m.example) {
         const ex = m.example;
+        out.push({
+          key: `${m.id}:task_example_intro`,
+          moduleId: m.id,
+          moduleType: m.type,
+          moduleNumber,
+          moduleLabel,
+          kind: 'task_example_intro',
+          label: `Module ${moduleNumber} · Example · Intro`,
+          summary: 'Example demo — researcher walks through this task',
+        });
         out.push({
           key: `${m.id}:task_example_initial_spec`,
           moduleId: m.id,

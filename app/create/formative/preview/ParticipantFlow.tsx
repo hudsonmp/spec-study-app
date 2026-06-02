@@ -593,6 +593,7 @@ type TaskStep =
   | { kind: 'scenario_ponder'; idx: number }
   | { kind: 'scenario_revise'; idx: number }
   // Example variants — only ever entered when module.example is present
+  | { kind: 'example_intro' }
   | { kind: 'example_initial_spec' }
   | { kind: 'example_scenario_read'; idx: number }
   | { kind: 'example_scenario_ponder'; idx: number }
@@ -670,6 +671,9 @@ function TaskRunner({
 
   function next(): void {
     // Example phases
+    if (step.kind === 'example_intro') {
+      return transitionTo({ kind: 'example_initial_spec' });
+    }
     if (step.kind === 'example_initial_spec') {
       return transitionTo({ kind: 'example_scenario_read', idx: 0 });
     }
@@ -688,9 +692,9 @@ function TaskRunner({
     }
     // Real phases
     if (step.kind === 'intro') {
-      // If example present, jump into example initial spec first.
+      // If example present, jump into example intro first.
       if (example) {
-        return transitionTo({ kind: 'example_initial_spec' });
+        return transitionTo({ kind: 'example_intro' });
       }
       return transitionTo({ kind: 'context' });
     }
@@ -740,6 +744,14 @@ function TaskRunner({
   }
 
   // ============ Example steps ============
+  if (step.kind === 'example_intro') {
+    if (!example) {
+      onComplete();
+      return null;
+    }
+    return <ExampleIntroStep onContinue={next} />;
+  }
+
   if (step.kind === 'example_initial_spec') {
     if (!example) {
       onComplete();
@@ -1231,6 +1243,26 @@ function ScenarioReviseStep({
 // All example steps are display-only. Spec and entity table render as
 // read-only, prefilled with the researcher-authored snapshot for that
 // moment. No persistence — example data is never sent to the server.
+
+function ExampleIntroStep({ onContinue }: { onContinue: () => void }) {
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <ExampleBanner />
+      <Centered>
+        <div className="space-y-6">
+          <h2 className="text-3xl font-medium tracking-tight">
+            Example — the researcher will demonstrate this task.
+          </h2>
+          <p className="text-[var(--muted)] leading-relaxed">
+            Watch as the researcher walks through this practice task. You will
+            complete a similar one yourself afterward.
+          </p>
+          <ContinueButton onClick={onContinue} />
+        </div>
+      </Centered>
+    </div>
+  );
+}
 
 function ExampleInitialSpecStep({
   example,

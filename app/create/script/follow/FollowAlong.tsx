@@ -271,6 +271,25 @@ function ScreenPreview({
       );
     }
 
+    case 'task_example_intro': {
+      if (!isTaskLike(module) || module.type !== 'task_warmup' || !module.example)
+        return <Unsupported />;
+      return (
+        <div>
+          <ExampleBannerInline />
+          <div className="flex flex-col items-center text-center max-w-xl mx-auto py-12">
+            <h2 className="text-2xl font-medium tracking-tight mb-4">
+              Example — the researcher will demonstrate this task.
+            </h2>
+            <p className="text-[var(--muted)] leading-relaxed">
+              Watch the researcher walk through the task. The participant
+              continues into the example walkthrough next.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
     case 'task_example_initial_spec': {
       if (!isTaskLike(module) || module.type !== 'task_warmup' || !module.example)
         return <Unsupported />;
