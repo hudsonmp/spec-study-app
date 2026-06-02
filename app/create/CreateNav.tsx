@@ -74,6 +74,15 @@ export default function CreateNav({
       )}
       <div className="ml-auto flex items-center gap-3">
         {trailing}
+        <Link
+          href="/study"
+          target="_blank"
+          rel="noopener"
+          className="text-xs text-[var(--muted)] hover:text-[var(--foreground)] underline hover:no-underline"
+          title="Open the participant study in a new tab. Requires a participant session — register at / first if needed."
+        >
+          Participant view ↗
+        </Link>
         <form action={researcherLogoutAction}>
           <button
             type="submit"

@@ -33,6 +33,15 @@ export default async function FormativePage(props: {
           >
             Preview ↗
           </Link>
+          <Link
+            href="/study"
+            target="_blank"
+            rel="noopener"
+            className="underline hover:no-underline"
+            title="Open the participant study in a new tab. Requires a participant session — register at / first if needed."
+          >
+            Participant view ↗
+          </Link>
           <form action={researcherLogoutAction}>
             <button
               type="submit"
