@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { researcherLogoutAction } from './actions';
+import CreateNav from './CreateNav';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,24 +28,15 @@ const CARDS: Card[] = [
 
 export default function CreateHub() {
   return (
-    <main className="flex-1 px-6 py-16 max-w-3xl mx-auto w-full">
-      <header className="border-b border-[var(--rule)] pb-4 mb-10 flex items-baseline justify-between">
-        <div>
-          <h1 className="text-2xl font-medium tracking-tight">
-            Research console
-          </h1>
-          <p className="text-sm text-[var(--muted)] mt-1">
-            Choose what you want to author or run.
-          </p>
-        </div>
-        <form action={researcherLogoutAction}>
-          <button
-            type="submit"
-            className="text-sm text-[var(--muted)] hover:text-[var(--foreground)] underline hover:no-underline"
-          >
-            Log out
-          </button>
-        </form>
+    <main className="flex-1 px-6 py-10 max-w-3xl mx-auto w-full">
+      <CreateNav current="hub" />
+      <header className="pb-4 mb-10">
+        <h1 className="text-2xl font-medium tracking-tight">
+          Research console
+        </h1>
+        <p className="text-sm text-[var(--muted)] mt-1">
+          Choose what you want to author or run.
+        </p>
       </header>
 
       <div className="grid sm:grid-cols-3 gap-4">

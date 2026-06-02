@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { createServiceRoleClient } from '@/lib/supabase/service';
 import { migrateContent } from '@/lib/study/reducer';
 import { enumerateScreens } from '@/lib/study/screens';
-import { researcherLogoutAction } from '../actions';
+import CreateNav from '../CreateNav';
 import ScriptEditor from './ScriptEditor';
 import ProjectPicker from './ProjectPicker';
 import { listScriptsForStudy } from './actions';
@@ -44,41 +44,33 @@ export default async function ScriptPage({
 
   return (
     <main className="flex-1 px-6 py-10 max-w-5xl mx-auto w-full">
-      <header className="border-b border-[var(--rule)] pb-4 mb-8 flex items-baseline justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-medium tracking-tight">Script</h1>
-          <p className="text-sm text-[var(--muted)] mt-1">
-            Author a researcher script for every participant screen. Saves
-            in real time.
-          </p>
-        </div>
-        <nav className="flex gap-4 text-sm items-center flex-wrap">
-          <ProjectPicker
-            studies={(studies ?? []).map((s) => ({
-              id: s.id,
-              name: s.name,
-              visibility: s.visibility,
-            }))}
-            activeId={active.id}
-          />
-          <Link
-            href={`/create/script/follow?p=${active.id}`}
-            className="border border-[var(--foreground)] px-3 py-1 hover:bg-[var(--foreground)] hover:text-[var(--background)] transition"
-          >
-            Follow along →
-          </Link>
-          <Link href="/create" className="underline hover:no-underline">
-            ← Hub
-          </Link>
-          <form action={researcherLogoutAction}>
-            <button
-              type="submit"
-              className="text-[var(--muted)] hover:text-[var(--foreground)] underline hover:no-underline"
+      <CreateNav
+        current="script"
+        trailing={
+          <>
+            <ProjectPicker
+              studies={(studies ?? []).map((s) => ({
+                id: s.id,
+                name: s.name,
+                visibility: s.visibility,
+              }))}
+              activeId={active.id}
+            />
+            <Link
+              href={`/create/script/follow?p=${active.id}`}
+              className="border border-[var(--foreground)] px-3 py-1 hover:bg-[var(--foreground)] hover:text-[var(--background)] transition text-sm"
             >
-              Log out
-            </button>
-          </form>
-        </nav>
+              Follow along →
+            </Link>
+          </>
+        }
+      />
+      <header className="pb-4 mb-6">
+        <h1 className="text-2xl font-medium tracking-tight">Script</h1>
+        <p className="text-sm text-[var(--muted)] mt-1">
+          Author a researcher script for every participant screen. Saves
+          in real time.
+        </p>
       </header>
 
       <ScriptEditor

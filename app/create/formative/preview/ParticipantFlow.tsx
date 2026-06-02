@@ -756,7 +756,6 @@ function ContextStep({
       />
       <section className="col-span-2 flex flex-col gap-4 overflow-y-auto pr-1">
         <h2 className="text-2xl font-medium tracking-tight">{t.title}</h2>
-        <ContextBlock context={t.studyContext} />
         <RequirementsBlock requirements={t.requirements} />
         <div className="mt-auto pt-4">
           <ContinueButton onClick={onContinue} />
@@ -792,7 +791,6 @@ function InitialSpecStep({
       <Panel defaultSize={67} minSize={30} maxSize={70}>
         <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
           <h2 className="text-2xl font-medium tracking-tight">{t.title}</h2>
-          <ContextBlock context={t.studyContext} />
           <RequirementsBlock requirements={t.requirements} />
           <div className="flex flex-col min-h-[14rem] flex-1">
             <div className="flex justify-between items-baseline">
@@ -815,19 +813,13 @@ function InitialSpecStep({
             <PanelLabel>Initial specifications</PanelLabel>
             <SavedHint at={specSavedAt} />
           </div>
-          {t.initialSpec.map((sub) => (
-            <p
-              key={sub.id}
-              className="italic text-sm text-[var(--muted)] leading-relaxed"
-            >
-              {sub.prompt}
-            </p>
-          ))}
+          <p className="text-xs italic text-[var(--muted)] leading-relaxed">
+            {SPEC_PLACEHOLDER}
+          </p>
           <textarea
             value={spec}
             onChange={(e) => setSpec(e.target.value)}
             className="flex-1 border border-[var(--rule)] p-3 bg-white text-[15px] leading-relaxed resize-none focus:outline-none focus:border-[var(--accent)] font-mono"
-            placeholder={SPEC_PLACEHOLDER}
           />
           <div className="pt-2">
             <ContinueButton onClick={onContinue} label="Next" />
@@ -875,11 +867,6 @@ function ScenarioReadStep({
         <div>
           <PanelLabel>Task</PanelLabel>
           <p className="font-medium leading-snug">{t.title}</p>
-          {t.studyContext && (
-            <p className="text-sm text-[var(--muted)] leading-relaxed mt-1">
-              {t.studyContext}
-            </p>
-          )}
         </div>
         <RequirementsBlock requirements={t.requirements} compact />
         <div className="pt-2 mt-auto">
@@ -1029,11 +1016,6 @@ function ScenarioReviseStep({
           </p>
           <div>
             <h2 className="text-xl font-medium tracking-tight">{t.title}</h2>
-            {t.studyContext && (
-              <p className="text-sm text-[var(--muted)] leading-relaxed mt-1">
-                {t.studyContext}
-              </p>
-            )}
           </div>
           <RequirementsBlock requirements={t.requirements} compact />
           <div>
@@ -1066,10 +1048,12 @@ function ScenarioReviseStep({
               <PanelLabel>Master specifications</PanelLabel>
               <SavedHint at={specSavedAt} />
             </div>
+            <p className="text-xs italic text-[var(--muted)] leading-relaxed">
+              {SPEC_PLACEHOLDER}
+            </p>
             <textarea
               value={spec}
               onChange={(e) => setSpec(e.target.value)}
-              placeholder={SPEC_PLACEHOLDER}
               className="flex-1 border border-[var(--rule)] p-3 bg-white text-[15px] leading-relaxed resize-none focus:outline-none focus:border-[var(--accent)] font-mono min-h-0"
             />
           </div>
@@ -1214,16 +1198,6 @@ function ScratchpadColumn({
         placeholder="Take notes here as you read…"
       />
     </aside>
-  );
-}
-
-function ContextBlock({ context }: { context: string }) {
-  if (!context) return null;
-  return (
-    <div>
-      <PanelLabel>Study context</PanelLabel>
-      <p className="leading-relaxed mt-1 whitespace-pre-wrap">{context}</p>
-    </div>
   );
 }
 
