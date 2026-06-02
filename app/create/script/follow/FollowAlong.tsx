@@ -159,6 +159,16 @@ function isRetrospective(m: Module): m is RetrospectiveReportModule {
   return m.type === 'retrospective_report';
 }
 
+function ExampleBannerInline() {
+  return (
+    <div className="border border-[#d8c98a] bg-[#fffbea] px-3 py-2 text-sm italic text-[#7c5a2e] mb-3">
+      <strong className="not-italic font-medium tracking-[0.04em]">
+        Example — the researcher will walk through this
+      </strong>
+    </div>
+  );
+}
+
 function ScreenPreview({
   screen,
   module,
@@ -167,6 +177,172 @@ function ScreenPreview({
   module: Module;
 }) {
   switch (screen.kind) {
+    case 'warmup_example_intro': {
+      if (!isWarmup(module) || !module.example) return <Unsupported />;
+      return (
+        <div>
+          <ExampleBannerInline />
+          <div className="flex flex-col items-center text-center max-w-xl mx-auto py-12">
+            <h2 className="text-2xl font-medium tracking-tight mb-4">
+              Think-Aloud Instructions
+            </h2>
+            <p className="text-[var(--muted)] leading-relaxed">
+              The researcher will demonstrate the think-aloud method.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    case 'warmup_example_body': {
+      if (!isWarmup(module) || !module.example) return <Unsupported />;
+      const ex = module.example;
+      return (
+        <div>
+          <ExampleBannerInline />
+          <div className="space-y-4">
+            <h2 className="text-2xl font-medium tracking-tight">
+              {module.title}
+            </h2>
+            {ex.altTaskDescription && (
+              <p className="italic text-[var(--muted)] leading-relaxed">
+                {ex.altTaskDescription}
+              </p>
+            )}
+            {ex.altBody && (
+              <p className="whitespace-pre-wrap leading-relaxed">
+                {ex.altBody}
+              </p>
+            )}
+            {ex.walkthroughText && (
+              <div className="border border-dashed border-[var(--rule)] bg-[var(--panel)] p-3">
+                <div className="text-[11px] uppercase tracking-wider text-[var(--muted)] mb-1">
+                  Researcher narrates
+                </div>
+                <p className="whitespace-pre-wrap leading-relaxed text-sm">
+                  {ex.walkthroughText}
+                </p>
+              </div>
+            )}
+            <p className="italic text-[var(--muted)] text-sm mt-6">
+              (Reveal example task button shown here.)
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    case 'warmup_example_revealed': {
+      if (!isWarmup(module) || !module.example) return <Unsupported />;
+      const ex = module.example;
+      return (
+        <div>
+          <ExampleBannerInline />
+          <div className="space-y-4">
+            <h2 className="text-2xl font-medium tracking-tight">
+              {module.title}
+            </h2>
+            {ex.altBody && (
+              <p className="whitespace-pre-wrap leading-relaxed">
+                {ex.altBody}
+              </p>
+            )}
+            <div className="border border-[var(--rule)] bg-[var(--rule-soft)] px-4 py-6 text-center mt-4">
+              <div className="text-xs uppercase tracking-wide text-[var(--muted)] mb-3">
+                Task
+              </div>
+              <div className="font-mono text-3xl tracking-[0.4em]">
+                {ex.altRevealedTask}
+              </div>
+            </div>
+            {ex.walkthroughText && (
+              <div className="border border-dashed border-[var(--rule)] bg-[var(--panel)] p-3">
+                <div className="text-[11px] uppercase tracking-wider text-[var(--muted)] mb-1">
+                  Researcher narrates
+                </div>
+                <p className="whitespace-pre-wrap leading-relaxed text-sm">
+                  {ex.walkthroughText}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    case 'task_example_initial_spec': {
+      if (!isTaskLike(module) || module.type !== 'task_warmup' || !module.example)
+        return <Unsupported />;
+      const ex = module.example;
+      return (
+        <div>
+          <ExampleBannerInline />
+          <div className="space-y-4">
+            <h2 className="text-2xl font-medium tracking-tight">{ex.title}</h2>
+            <div>
+              <div className="text-xs uppercase tracking-wider text-[var(--muted)] mb-2">
+                Prefilled spec (display-only)
+              </div>
+              <pre className="border border-[var(--rule)] bg-[var(--rule-soft)] p-3 text-sm whitespace-pre-wrap font-mono">
+                {ex.prefilled.initial || '(empty)'}
+              </pre>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    case 'task_example_scenario_read':
+    case 'task_example_scenario_revise': {
+      if (!isTaskLike(module) || module.type !== 'task_warmup' || !module.example)
+        return <Unsupported />;
+      const ex = module.example;
+      if (screen.idx == null || screen.idx >= ex.scenarios.length) {
+        return <Unsupported />;
+      }
+      const scenario = ex.scenarios[screen.idx];
+      const prefilled = ex.prefilled.perScenario[screen.idx];
+      const isRead = screen.kind === 'task_example_scenario_read';
+      const specText = isRead ? prefilled?.read : prefilled?.revise;
+      return (
+        <div>
+          <ExampleBannerInline />
+          <div className="space-y-4">
+            <h2 className="text-2xl font-medium tracking-tight">
+              {ex.title} · {scenario.title}
+            </h2>
+            <ul className="space-y-2">
+              {scenario.clauses.map((clause) => (
+                <ClauseLine key={clause.id} clause={clause} />
+              ))}
+            </ul>
+            <div>
+              <div className="text-xs uppercase tracking-wider text-[var(--muted)] mb-2">
+                Prefilled spec — {isRead ? 'after reading' : 'after revising'}
+              </div>
+              <pre className="border border-[var(--rule)] bg-[var(--rule-soft)] p-3 text-sm whitespace-pre-wrap font-mono">
+                {specText || '(empty)'}
+              </pre>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    case 'task_example_scenario_ponder': {
+      return (
+        <div>
+          <ExampleBannerInline />
+          <div className="flex flex-col items-center text-center max-w-xl mx-auto py-12">
+            <h2 className="text-2xl font-medium tracking-tight mb-4">Pause</h2>
+            <p className="text-[var(--muted)] leading-relaxed">
+              The researcher pauses here to demonstrate ponder-then-revise.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
     case 'warmup_intro': {
       if (!isWarmup(module)) return <Unsupported />;
       return (
@@ -361,23 +537,27 @@ function ScreenPreview({
       );
     }
 
-    case 'retrospective': {
+    case 'retrospective_question': {
       if (!isRetrospective(module)) return <Unsupported />;
+      if (screen.idx == null || screen.idx >= module.questions.length) {
+        return <Unsupported />;
+      }
+      const q = module.questions[screen.idx];
       return (
         <div className="space-y-4">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
+            Retrospective · Question {screen.idx + 1} of {module.questions.length}
+          </p>
           <h2 className="text-2xl font-medium tracking-tight">
             {module.title || 'Retrospective Report'}
           </h2>
-          <div className="space-y-3 mt-4">
-            {module.questions.map((q) => (
-              <p key={q.id} className="leading-relaxed">
-                <span className="text-xs font-medium text-[var(--muted)] uppercase tracking-wide mr-2">
-                  Q
-                </span>
-                {q.text}
-              </p>
-            ))}
-          </div>
+          <p className="leading-relaxed">
+            <strong>{screen.idx + 1}.</strong> {q.text}
+          </p>
+          <p className="italic text-[var(--muted)] text-sm">
+            (Participant answers in a textarea; their spec and entity table are
+            shown read-only beside.)
+          </p>
         </div>
       );
     }
