@@ -16,6 +16,7 @@ import type {
   ThinkAloudWarmupModule,
   ThinkAloudExample,
   TaskExample,
+  TaskExamplePrefilled,
   RetrospectiveReportModule,
   ModuleType,
   Clause,
@@ -24,12 +25,18 @@ import type {
   SeededMarker,
   SeededVehicleColor,
   SeededPersonLetter,
+  Requirement,
+  Scenario,
+  SpecSubsection,
+  Entity,
+  Element as EntityElement,
 } from '@/lib/types/study';
 import {
   MODULE_TYPE_LABEL,
   newModuleOfType,
   newThinkAloudExample,
   newTaskExample,
+  newPrefilledPerScenario,
   uid,
   VEHICLE_COLOR_TO_NUMBER,
   VEHICLE_HEX,
@@ -601,6 +608,7 @@ function TaskEditor({
       if (mod.type === 'task' || mod.type === 'task_warmup') fn(mod);
     });
   }
+  const landmarks = cityMapLandmarkOptions(m.cityMap);
   return (
     <div className="space-y-4">
       {m.type === 'task_warmup' && (
@@ -628,86 +636,25 @@ function TaskEditor({
         />
       </FieldLabel>
 
-      <Section
-        title="Requirements (user stories)"
-        onAdd={() =>
-          p((t) => t.requirements.push({ id: uid(), role: '', want: '', so: '' }))
-        }
-      >
-        {m.requirements.map((r, i) => (
-          <div
-            key={r.id}
-            className="grid grid-cols-[28px_1fr_auto] gap-2 mb-2 items-start"
-          >
-            <div className="text-xs text-[var(--muted)] pt-2">{i + 1}.</div>
-            <div className="grid gap-1">
-              <ReqField
-                prefix="As a"
-                value={r.role}
-                onChange={(v) => p((t) => (t.requirements[i].role = v))}
-              />
-              <ReqField
-                prefix="I want"
-                value={r.want}
-                onChange={(v) => p((t) => (t.requirements[i].want = v))}
-              />
-              <ReqField
-                prefix="so that"
-                value={r.so}
-                onChange={(v) => p((t) => (t.requirements[i].so = v))}
-              />
-            </div>
-            <div className="flex">
-              <button
-                className={iconBtn}
-                disabled={i === 0}
-                onClick={() => p((t) => void moveInArray(t.requirements, i, -1))}
-              >
-                ↑
-              </button>
-              <button
-                className={iconBtn}
-                disabled={i === m.requirements.length - 1}
-                onClick={() => p((t) => void moveInArray(t.requirements, i, 1))}
-              >
-                ↓
-              </button>
-              <button
-                className={iconBtn}
-                onClick={() => p((t) => t.requirements.splice(i, 1))}
-              >
-                ×
-              </button>
-            </div>
-          </div>
-        ))}
-      </Section>
+      <RequirementsListEditor
+        requirements={m.requirements}
+        setRequirements={(next) => p((t) => (t.requirements = next))}
+      />
 
-      <CityMapSection module={m} patch={p} />
-
-      <Section
-        title="Initial specification (prompts shown before scenarios)"
-        onAdd={() =>
-          p((t) =>
-            t.initialSpec.push({ id: uid(), prompt: 'New prompt', boxHeight: 2 }),
-          )
+      <CityMapSection
+        cityMap={m.cityMap}
+        setCityMap={(next) =>
+          p((t) => {
+            if (next === undefined) delete t.cityMap;
+            else t.cityMap = next;
+          })
         }
-      >
-        {m.initialSpec.map((sub, i) => (
-          <PromptRow
-            key={sub.id}
-            prompt={sub.prompt}
-            boxHeight={sub.boxHeight}
-            onPrompt={(v) => p((t) => (t.initialSpec[i].prompt = v))}
-            onBoxHeight={(v) => p((t) => (t.initialSpec[i].boxHeight = v))}
-            onUp={() => p((t) => void moveInArray(t.initialSpec, i, -1))}
-            onDown={() => p((t) => void moveInArray(t.initialSpec, i, 1))}
-            onDelete={() => p((t) => t.initialSpec.splice(i, 1))}
-            canUp={i > 0}
-            canDown={i < m.initialSpec.length - 1}
-          />
-        ))}
-      </Section>
+      />
+
+      <InitialSpecPromptsEditor
+        initialSpec={m.initialSpec}
+        setInitialSpec={(next) => p((t) => (t.initialSpec = next))}
+      />
 
       {m.type === 'task_warmup' && (
         <details className="border border-dashed border-[var(--rule)] p-3">
@@ -739,7 +686,7 @@ function TaskEditor({
               }
               className="text-xs italic text-[var(--muted)] hover:text-[var(--foreground)] border border-dashed border-[var(--rule)] px-3 py-1 mt-2"
             >
-              + Add example demo (stub: paste JSON)
+              + Add example demo
             </button>
           )}
         </details>
@@ -789,12 +736,144 @@ function TaskEditor({
             patch={(fn) => p((t) => fn(t.scenarios[i]))}
             onMove={(dir) => p((t) => void moveInArray(t.scenarios, i, dir))}
             onDelete={() => p((t) => t.scenarios.splice(i, 1))}
-            module={m}
+            landmarkOptions={landmarks}
           />
         ))}
       </Section>
 
     </div>
+  );
+}
+
+// ===================== Primitive: requirements list =====================
+
+function RequirementsListEditor({
+  requirements,
+  setRequirements,
+  title = 'Requirements (user stories)',
+}: {
+  requirements: Requirement[];
+  setRequirements: (next: Requirement[]) => void;
+  title?: string;
+}) {
+  function update(i: number, patch: Partial<Requirement>) {
+    const next = requirements.slice();
+    next[i] = { ...next[i], ...patch };
+    setRequirements(next);
+  }
+  function move(i: number, dir: -1 | 1) {
+    const next = requirements.slice();
+    if (moveInArray(next, i, dir)) setRequirements(next);
+  }
+  function remove(i: number) {
+    setRequirements(requirements.filter((_, idx) => idx !== i));
+  }
+  return (
+    <Section
+      title={title}
+      onAdd={() =>
+        setRequirements([
+          ...requirements,
+          { id: uid(), role: '', want: '', so: '' },
+        ])
+      }
+    >
+      {requirements.map((r, i) => (
+        <div
+          key={r.id}
+          className="grid grid-cols-[28px_1fr_auto] gap-2 mb-2 items-start"
+        >
+          <div className="text-xs text-[var(--muted)] pt-2">{i + 1}.</div>
+          <div className="grid gap-1">
+            <ReqField
+              prefix="As a"
+              value={r.role}
+              onChange={(v) => update(i, { role: v })}
+            />
+            <ReqField
+              prefix="I want"
+              value={r.want}
+              onChange={(v) => update(i, { want: v })}
+            />
+            <ReqField
+              prefix="so that"
+              value={r.so}
+              onChange={(v) => update(i, { so: v })}
+            />
+          </div>
+          <div className="flex">
+            <button
+              className={iconBtn}
+              disabled={i === 0}
+              onClick={() => move(i, -1)}
+            >
+              ↑
+            </button>
+            <button
+              className={iconBtn}
+              disabled={i === requirements.length - 1}
+              onClick={() => move(i, 1)}
+            >
+              ↓
+            </button>
+            <button className={iconBtn} onClick={() => remove(i)}>
+              ×
+            </button>
+          </div>
+        </div>
+      ))}
+    </Section>
+  );
+}
+
+// ===================== Primitive: initial-spec prompts ====================
+
+function InitialSpecPromptsEditor({
+  initialSpec,
+  setInitialSpec,
+  title = 'Initial specification (prompts shown before scenarios)',
+}: {
+  initialSpec: SpecSubsection[];
+  setInitialSpec: (next: SpecSubsection[]) => void;
+  title?: string;
+}) {
+  function update(i: number, patch: Partial<SpecSubsection>) {
+    const next = initialSpec.slice();
+    next[i] = { ...next[i], ...patch };
+    setInitialSpec(next);
+  }
+  function move(i: number, dir: -1 | 1) {
+    const next = initialSpec.slice();
+    if (moveInArray(next, i, dir)) setInitialSpec(next);
+  }
+  function remove(i: number) {
+    setInitialSpec(initialSpec.filter((_, idx) => idx !== i));
+  }
+  return (
+    <Section
+      title={title}
+      onAdd={() =>
+        setInitialSpec([
+          ...initialSpec,
+          { id: uid(), prompt: 'New prompt', boxHeight: 2 },
+        ])
+      }
+    >
+      {initialSpec.map((sub, i) => (
+        <PromptRow
+          key={sub.id}
+          prompt={sub.prompt}
+          boxHeight={sub.boxHeight}
+          onPrompt={(v) => update(i, { prompt: v })}
+          onBoxHeight={(v) => update(i, { boxHeight: v })}
+          onUp={() => move(i, -1)}
+          onDown={() => move(i, 1)}
+          onDelete={() => remove(i)}
+          canUp={i > 0}
+          canDown={i < initialSpec.length - 1}
+        />
+      ))}
+    </Section>
   );
 }
 
@@ -892,10 +971,13 @@ function RetrospectiveReportEditor({
 }
 
 // =========================== Task example editor ============================
-// V1 ships as a JSON paste-box stub. The runner consumes the same TaskExample
-// shape either way; promoting to a full nested editor is mechanical follow-up
-// work. Keeping the surface here small avoids two parallel editors for what
-// is morally the same data.
+// Full nested editor: title / studyContext / requirements / city map / initial-
+// spec prompts / per-moment prefill snapshots / scenarios with nested per-
+// scenario prefill. Mirrors the structure of TaskEditor but the body is
+// display-only when rendered to participants; researchers walk through it.
+//
+// scenarios and prefilled.perScenario stay 1:1 — add/delete operations
+// against scenarios mirror onto the prefilled array.
 
 function TaskExampleEditor({
   example,
@@ -906,80 +988,410 @@ function TaskExampleEditor({
   onChange: (next: TaskExample) => void;
   onClear: () => void;
 }) {
-  const [raw, setRaw] = useState<string>(() => JSON.stringify(example, null, 2));
-  const [err, setErr] = useState<string | null>(null);
-
-  function tryApply() {
-    try {
-      const parsed = JSON.parse(raw) as TaskExample;
-      // Minimal shape check; the runner is defensive on missing fields.
-      if (
-        !parsed ||
-        typeof parsed !== 'object' ||
-        !Array.isArray(parsed.scenarios) ||
-        !parsed.prefilled ||
-        !parsed.prefilled.initial ||
-        typeof parsed.prefilled.initial !== 'object' ||
-        !Array.isArray(parsed.prefilled.perScenario)
-      ) {
-        setErr(
-          'Missing required fields (scenarios, prefilled.initial, prefilled.perScenario).',
-        );
-        return;
-      }
-      setErr(null);
-      onChange(parsed);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Invalid JSON');
-    }
+  // Direct field mutators — kept inline because the per-field edits are
+  // small and benefit from the simplest possible call sites.
+  function set<K extends keyof TaskExample>(key: K, value: TaskExample[K]) {
+    onChange({ ...example, [key]: value });
   }
 
+  function setPrefilled(next: TaskExamplePrefilled) {
+    onChange({ ...example, prefilled: next });
+  }
+
+  function setPerScenarioAt(
+    i: number,
+    patch: Partial<TaskExamplePrefilled['perScenario'][number]>,
+  ) {
+    const ps = example.prefilled.perScenario.slice();
+    ps[i] = { ...ps[i], ...patch };
+    setPrefilled({ ...example.prefilled, perScenario: ps });
+  }
+
+  function setScenarios(nextScenarios: Scenario[]) {
+    // Resize prefilled.perScenario to match the new scenarios length.
+    const oldPs = example.prefilled.perScenario;
+    const ps: TaskExamplePrefilled['perScenario'] = [];
+    for (let i = 0; i < nextScenarios.length; i++) {
+      ps.push(oldPs[i] ?? newPrefilledPerScenario());
+    }
+    onChange({
+      ...example,
+      scenarios: nextScenarios,
+      prefilled: { ...example.prefilled, perScenario: ps },
+    });
+  }
+
+  const landmarks = cityMapLandmarkOptions(example.cityMap);
+
   return (
-    <div className="mt-3 space-y-3">
-      <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
-        Shown BEFORE the real task with a read-only example banner. Spec
-        textareas display the prefilled snapshots and cannot be edited by the
-        participant.
-        <br />
-        <strong>V1 stub:</strong> author the example as a JSON blob matching
-        the <code>TaskExample</code> shape. <code>prefilled.perScenario</code>{' '}
-        length must equal <code>scenarios</code> length.
-      </p>
-      <textarea
-        className={inputCls + ' min-h-[280px] font-mono text-xs'}
-        value={raw}
-        onChange={(e) => setRaw(e.target.value)}
-        spellCheck={false}
-      />
-      <div className="flex gap-3 items-center">
-        <button
-          type="button"
-          onClick={tryApply}
-          className="text-xs border border-[var(--foreground)] px-3 py-1 hover:bg-[var(--foreground)] hover:text-[var(--background)]"
-        >
-          Apply
-        </button>
+    <div className="mt-3 space-y-4">
+      <div className="flex justify-between items-baseline gap-3">
+        <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2 flex-1">
+          Example screens are display-only; participants watch the researcher
+          walk through them. Authored entities and spec text appear read-only
+          on the corresponding participant screens.
+        </p>
         <button
           type="button"
           onClick={onClear}
-          className="text-xs text-[var(--danger)] hover:underline"
+          className="text-xs text-[var(--danger)] hover:underline whitespace-nowrap self-start mt-2"
         >
-          Remove example demo
+          Remove example
         </button>
-        {err && (
-          <span className="text-xs text-[var(--danger)] italic">{err}</span>
-        )}
       </div>
+
+      <FieldLabel label="Title">
+        <input
+          type="text"
+          className={inputCls}
+          value={example.title}
+          onChange={(e) => set('title', e.target.value)}
+        />
+      </FieldLabel>
+
+      <FieldLabel label="Study context (researcher-only — hidden from participant on example screens)">
+        <textarea
+          className={inputCls + ' min-h-[60px]'}
+          value={example.studyContext}
+          onChange={(e) => set('studyContext', e.target.value)}
+        />
+      </FieldLabel>
+
+      <RequirementsListEditor
+        requirements={example.requirements}
+        setRequirements={(next) => set('requirements', next)}
+        title="Example requirements (user stories)"
+      />
+
+      <CityMapSection
+        cityMap={example.cityMap}
+        setCityMap={(next) => set('cityMap', next)}
+        title="Example city map (optional override)"
+        addLabel="+ add example map"
+      />
+
+      <InitialSpecPromptsEditor
+        initialSpec={example.initialSpec}
+        setInitialSpec={(next) => set('initialSpec', next)}
+        title="Example initial-spec prompts"
+      />
+
+      <Section title="Initial pre-fill (shown on Example · Initial spec)">
+        <div className="border border-[var(--rule)] bg-white p-3 space-y-3">
+          <FieldLabel label="Spec text shown initially">
+            <textarea
+              className={inputCls + ' min-h-[100px] font-mono text-sm'}
+              value={example.prefilled.initial.spec}
+              onChange={(e) =>
+                setPrefilled({
+                  ...example.prefilled,
+                  initial: { ...example.prefilled.initial, spec: e.target.value },
+                })
+              }
+            />
+          </FieldLabel>
+          <FieldLabel label="Entities shown initially">
+            <PrefilledEntityEditor
+              entities={example.prefilled.initial.entities}
+              setEntities={(next) =>
+                setPrefilled({
+                  ...example.prefilled,
+                  initial: { ...example.prefilled.initial, entities: next },
+                })
+              }
+            />
+          </FieldLabel>
+        </div>
+      </Section>
+
+      <Section
+        title={`Example scenarios (${example.scenarios.length}/3)`}
+        onAdd={
+          example.scenarios.length < 3
+            ? () => {
+                const prev = example.scenarios[example.scenarios.length - 1];
+                const clonedClauses: Clause[] = prev
+                  ? prev.clauses.map((c) => ({
+                      id: uid(),
+                      type: c.type,
+                      text: c.text,
+                      marker:
+                        c.marker === 'superseded' ? 'superseded' : undefined,
+                    }))
+                  : [
+                      { id: uid(), type: 'Given', text: '' },
+                      { id: uid(), type: 'When', text: '' },
+                      { id: uid(), type: 'Then', text: '' },
+                    ];
+                setScenarios([
+                  ...example.scenarios,
+                  {
+                    id: uid(),
+                    title: `Scenario ${example.scenarios.length + 1}`,
+                    facilitatorNote: '',
+                    clauses: clonedClauses,
+                  },
+                ]);
+              }
+            : undefined
+        }
+      >
+        {example.scenarios.map((sc, i) => (
+          <ScenarioBlock
+            key={sc.id}
+            scenario={sc}
+            index={i}
+            total={example.scenarios.length}
+            patch={(fn) => {
+              const next = example.scenarios.slice();
+              const cloned = structuredClone(next[i]);
+              fn(cloned);
+              next[i] = cloned;
+              setScenarios(next);
+            }}
+            onMove={(dir) => {
+              const nextScenarios = example.scenarios.slice();
+              if (!moveInArray(nextScenarios, i, dir)) return;
+              // Mirror the move in prefilled.perScenario so per-scenario
+              // prefills stay attached to their scenario.
+              const nextPs = example.prefilled.perScenario.slice();
+              moveInArray(nextPs, i, dir);
+              onChange({
+                ...example,
+                scenarios: nextScenarios,
+                prefilled: { ...example.prefilled, perScenario: nextPs },
+              });
+            }}
+            onDelete={() => {
+              const nextScenarios = example.scenarios.filter(
+                (_, idx) => idx !== i,
+              );
+              const nextPs = example.prefilled.perScenario.filter(
+                (_, idx) => idx !== i,
+              );
+              onChange({
+                ...example,
+                scenarios: nextScenarios,
+                prefilled: { ...example.prefilled, perScenario: nextPs },
+              });
+            }}
+            landmarkOptions={landmarks}
+            childAfterFacilitator={
+              <details className="mt-2 border border-dashed border-[var(--rule)] p-2">
+                <summary className="text-xs italic text-[var(--muted)] cursor-pointer">
+                  Pre-fill for this scenario
+                </summary>
+                <PerScenarioPrefillEditor
+                  perScenario={
+                    example.prefilled.perScenario[i] ?? newPrefilledPerScenario()
+                  }
+                  setPerScenario={(patch) => setPerScenarioAt(i, patch)}
+                />
+              </details>
+            }
+          />
+        ))}
+      </Section>
+    </div>
+  );
+}
+
+function PerScenarioPrefillEditor({
+  perScenario,
+  setPerScenario,
+}: {
+  perScenario: TaskExamplePrefilled['perScenario'][number];
+  setPerScenario: (
+    patch: Partial<TaskExamplePrefilled['perScenario'][number]>,
+  ) => void;
+}) {
+  return (
+    <div className="mt-2 space-y-3">
+      <FieldLabel label="After-read spec text">
+        <textarea
+          className={inputCls + ' min-h-[80px] font-mono text-sm'}
+          value={perScenario.read.spec}
+          onChange={(e) =>
+            setPerScenario({
+              read: { ...perScenario.read, spec: e.target.value },
+            })
+          }
+        />
+      </FieldLabel>
+      <FieldLabel label="After-read entities">
+        <PrefilledEntityEditor
+          entities={perScenario.read.entities}
+          setEntities={(next) =>
+            setPerScenario({
+              read: { ...perScenario.read, entities: next },
+            })
+          }
+        />
+      </FieldLabel>
+      <FieldLabel label="After-revise spec text">
+        <textarea
+          className={inputCls + ' min-h-[80px] font-mono text-sm'}
+          value={perScenario.revise.spec}
+          onChange={(e) =>
+            setPerScenario({
+              revise: { ...perScenario.revise, spec: e.target.value },
+            })
+          }
+        />
+      </FieldLabel>
+      <FieldLabel label="After-revise entities">
+        <PrefilledEntityEditor
+          entities={perScenario.revise.entities}
+          setEntities={(next) =>
+            setPerScenario({
+              revise: { ...perScenario.revise, entities: next },
+            })
+          }
+        />
+      </FieldLabel>
+      <FieldLabel label="Ponder copy (overrides default)">
+        <textarea
+          className={inputCls + ' min-h-[60px]'}
+          value={perScenario.ponderCopy ?? ''}
+          onChange={(e) =>
+            setPerScenario({
+              ponderCopy: e.target.value.length === 0 ? undefined : e.target.value,
+            })
+          }
+          placeholder="Leave blank to use the default pause prompt."
+        />
+      </FieldLabel>
+    </div>
+  );
+}
+
+// =========================== Prefilled entity editor =========================
+// Authoring-side mini editor for Entity[]. Same data model as the participant-
+// side editor inside ParticipantFlow.tsx but with different layout/bindings —
+// the participant editor lives in a client file and is not exported. Keeping
+// a small dedicated authoring editor avoids cross-file coupling.
+
+function PrefilledEntityEditor({
+  entities,
+  setEntities,
+}: {
+  entities: Entity[];
+  setEntities: (next: Entity[]) => void;
+}) {
+  function addEntity() {
+    setEntities([...entities, { id: uid(), name: '', elements: [] }]);
+  }
+  function updateEntity(i: number, patch: Partial<Entity>) {
+    const next = entities.slice();
+    next[i] = { ...next[i], ...patch };
+    setEntities(next);
+  }
+  function removeEntity(i: number) {
+    setEntities(entities.filter((_, idx) => idx !== i));
+  }
+  function addElement(i: number) {
+    const next = entities.slice();
+    next[i] = {
+      ...next[i],
+      elements: [...next[i].elements, { id: uid(), name: '' }],
+    };
+    setEntities(next);
+  }
+  function updateElement(
+    i: number,
+    ei: number,
+    patch: Partial<EntityElement>,
+  ) {
+    const next = entities.slice();
+    const elems = next[i].elements.slice();
+    elems[ei] = { ...elems[ei], ...patch };
+    next[i] = { ...next[i], elements: elems };
+    setEntities(next);
+  }
+  function removeElement(i: number, ei: number) {
+    const next = entities.slice();
+    next[i] = {
+      ...next[i],
+      elements: next[i].elements.filter((_, idx) => idx !== ei),
+    };
+    setEntities(next);
+  }
+  return (
+    <div className="border border-dashed border-[var(--rule)] bg-white p-2 space-y-2">
+      {entities.length === 0 && (
+        <p className="text-xs italic text-[var(--muted)]">
+          No entities yet — add one below.
+        </p>
+      )}
+      {entities.map((ent, i) => (
+        <div key={ent.id} className="border border-[var(--rule)] p-2">
+          <div className="flex gap-2 items-center">
+            <input
+              value={ent.name}
+              onChange={(e) => updateEntity(i, { name: e.target.value })}
+              placeholder="Entity name"
+              className="flex-1 border-0 border-b border-dashed border-[var(--rule)] py-1 bg-transparent text-sm focus:outline-none focus:border-[var(--accent)]"
+            />
+            <button
+              type="button"
+              onClick={() => addElement(i)}
+              className="text-[11px] italic text-[var(--muted)] hover:text-[var(--foreground)] border border-dashed border-[var(--rule)] px-2 py-0.5"
+            >
+              + element
+            </button>
+            <button
+              type="button"
+              onClick={() => removeEntity(i)}
+              className="text-[11px] text-[var(--muted)] hover:text-[var(--danger)]"
+              aria-label="Remove entity"
+            >
+              ×
+            </button>
+          </div>
+          <ul className="mt-2 pl-3 space-y-1">
+            {ent.elements.length === 0 && (
+              <li className="text-[11px] italic text-[var(--muted)]">
+                (no elements)
+              </li>
+            )}
+            {ent.elements.map((el, ei) => (
+              <li key={el.id} className="flex gap-2 items-center text-sm">
+                <span className="text-[var(--muted)]">•</span>
+                <input
+                  value={el.name}
+                  onChange={(e) =>
+                    updateElement(i, ei, { name: e.target.value })
+                  }
+                  placeholder="Element name"
+                  className="flex-1 border-0 border-b border-dashed border-[var(--rule)] py-0.5 bg-transparent focus:outline-none focus:border-[var(--accent)]"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeElement(i, ei)}
+                  className="text-[11px] text-[var(--muted)] hover:text-[var(--danger)]"
+                  aria-label="Remove element"
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={addEntity}
+        className="text-xs italic text-[var(--muted)] hover:text-[var(--foreground)] border border-dashed border-[var(--rule)] px-3 py-1"
+      >
+        + entity
+      </button>
     </div>
   );
 }
 
 // =========================== Scenario block helpers ============================
 
-function landmarkOptions(
-  m: Extract<Module, { type: 'task' | 'task_warmup' }>,
-): string[] {
-  const map = m.cityMap;
+function cityMapLandmarkOptions(map: CityMap | undefined): string[] {
   if (!map) return [];
   const out: string[] = [];
   out.push(map.origin.label);
@@ -1119,7 +1531,8 @@ function ScenarioBlock({
   patch,
   onMove,
   onDelete,
-  module: parentModule,
+  landmarkOptions,
+  childAfterFacilitator,
 }: {
   scenario: TaskContent['scenarios'][number];
   index: number;
@@ -1129,7 +1542,8 @@ function ScenarioBlock({
   ) => void;
   onMove: (dir: -1 | 1) => void;
   onDelete: () => void;
-  module: Extract<Module, { type: 'task' | 'task_warmup' }>;
+  landmarkOptions: string[];
+  childAfterFacilitator?: React.ReactNode;
 }) {
   return (
     <div className="border border-[var(--rule)] bg-white p-3 mb-2">
@@ -1254,7 +1668,7 @@ function ScenarioBlock({
         </summary>
         <SeededMarkerEditor
           markers={scenario.seededMarkers ?? []}
-          landmarks={landmarkOptions(parentModule)}
+          landmarks={landmarkOptions}
           onChange={(next) =>
             patch((sc) => {
               sc.seededMarkers = next;
@@ -1275,60 +1689,66 @@ function ScenarioBlock({
           }
         />
       </details>
+
+      {childAfterFacilitator}
     </div>
   );
 }
 
 // ============================== City Map ==============================
 
+function defaultCityMap(): CityMap {
+  return {
+    gridSize: 20,
+    streets: [],
+    landmarks: [],
+    origin: { label: 'Origin / Charging', x: 10, y: 10 },
+  };
+}
+
 function CityMapSection({
-  module: m,
-  patch,
+  cityMap,
+  setCityMap,
+  title = 'City reference map (optional)',
+  addLabel = '+ add map',
+  removeLabel = 'remove map',
 }: {
-  module: Extract<Module, { type: 'task' | 'task_warmup' }>;
-  patch: (fn: (t: TaskContent) => void) => void;
+  cityMap: CityMap | undefined;
+  setCityMap: (next: CityMap | undefined) => void;
+  title?: string;
+  addLabel?: string;
+  removeLabel?: string;
 }) {
   return (
     <Section
-      title="City reference map (optional)"
+      title={title}
       trailing={
-        m.cityMap ? (
+        cityMap ? (
           <ConfirmButton
-            label="remove map"
+            label={removeLabel}
             confirmLabel="Remove map"
-            onConfirm={() =>
-              patch((t) => {
-                delete t.cityMap;
-              })
-            }
+            onConfirm={() => setCityMap(undefined)}
           />
         ) : (
           <button
             className={iconBtn}
-            onClick={() =>
-              patch((t) => {
-                t.cityMap = {
-                  gridSize: 20,
-                  streets: [],
-                  landmarks: [],
-                  origin: { label: 'Origin / Charging', x: 10, y: 10 },
-                };
-              })
-            }
+            onClick={() => setCityMap(defaultCityMap())}
           >
-            + add map
+            {addLabel}
           </button>
         )
       }
     >
-      {m.cityMap && (
+      {cityMap && (
         <CityMapEditor
-          map={m.cityMap}
-          onChange={(fn) =>
-            patch((t) => {
-              if (t.cityMap) fn(t.cityMap);
-            })
-          }
+          map={cityMap}
+          onChange={(fn) => {
+            // Apply the mutating fn over a structural clone so callers see
+            // an immutable update.
+            const next = structuredClone(cityMap);
+            fn(next);
+            setCityMap(next);
+          }}
         />
       )}
     </Section>
