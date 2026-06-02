@@ -143,22 +143,11 @@ export type TaskContent = {
   scenarios: Scenario[]; // 1-3 enforced by the editor
 };
 
-// Researcher-authored prefilled spec text shown at each major moment of the
-// example task. Snapshots are display-only — the participant cannot edit on
-// example screens. perScenario length must equal example.scenarios.length.
-export type TaskExamplePrefilled = {
-  initial: string;
-  perScenario: { read: string; revise: string }[];
-};
-
-export type TaskExample = TaskContent & {
-  prefilled: TaskExamplePrefilled;
-};
-
 // =========================== Entity / Element table ===========================
 // Embedded under the spec textarea on every spec-bearing screen. Researcher
-// does not author these; the participant fills them in as they reason about
-// the system's data model. Persisted alongside the spec.
+// does not author these for real tasks; the participant fills them in as they
+// reason about the system's data model. Persisted alongside the spec. For
+// EXAMPLE tasks the researcher authors them as part of the prefilled snapshot.
 
 export type Element = {
   id: string;
@@ -169,6 +158,33 @@ export type Entity = {
   id: string;
   name: string;
   elements: Element[];
+};
+
+// Researcher-authored prefilled snapshot for a single example moment.
+// `spec` is the textarea contents shown read-only; `entities` is the table
+// shown beside it. Empty arrays / empty strings render as "nothing recorded".
+export type PrefilledMoment = {
+  spec: string;
+  entities: Entity[];
+};
+
+// Researcher-authored prefilled state shown at each major moment of the
+// example task. Snapshots are display-only — the participant cannot edit on
+// example screens. perScenario length must equal example.scenarios.length.
+// `ponderCopy` overrides the default ponder text on this scenario's pause;
+// undefined / empty means use the default copy with an "(Example — researcher
+// narrates)" note.
+export type TaskExamplePrefilled = {
+  initial: PrefilledMoment;
+  perScenario: {
+    read: PrefilledMoment;
+    revise: PrefilledMoment;
+    ponderCopy?: string;
+  }[];
+};
+
+export type TaskExample = TaskContent & {
+  prefilled: TaskExamplePrefilled;
 };
 
 export type RetrospectiveReportModule = {
@@ -271,6 +287,18 @@ export function newThinkAloudExample(): ThinkAloudExample {
   };
 }
 
+export function newPrefilledMoment(): PrefilledMoment {
+  return { spec: '', entities: [] };
+}
+
+export function newPrefilledPerScenario(): TaskExamplePrefilled['perScenario'][number] {
+  return {
+    read: newPrefilledMoment(),
+    revise: newPrefilledMoment(),
+    ponderCopy: undefined,
+  };
+}
+
 export function newTaskExample(scenariosLen = 1): TaskExample {
   const base = newTaskContent();
   // Ensure the example carries `scenariosLen` scenarios so prefilled.perScenario
@@ -291,8 +319,8 @@ export function newTaskExample(scenariosLen = 1): TaskExample {
   return {
     ...base,
     prefilled: {
-      initial: '',
-      perScenario: Array.from({ length: n }, () => ({ read: '', revise: '' })),
+      initial: newPrefilledMoment(),
+      perScenario: Array.from({ length: n }, () => newPrefilledPerScenario()),
     },
   };
 }

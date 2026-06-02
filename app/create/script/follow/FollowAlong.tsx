@@ -6,6 +6,7 @@ import type { Screen } from '@/lib/study/screens';
 import type {
   Module,
   ProjectContent,
+  PrefilledMoment,
   ThinkAloudWarmupModule,
   TaskModule,
   TaskWarmupModule,
@@ -274,19 +275,13 @@ function ScreenPreview({
       if (!isTaskLike(module) || module.type !== 'task_warmup' || !module.example)
         return <Unsupported />;
       const ex = module.example;
+      const moment = ex.prefilled.initial;
       return (
         <div>
           <ExampleBannerInline />
           <div className="space-y-4">
             <h2 className="text-2xl font-medium tracking-tight">{ex.title}</h2>
-            <div>
-              <div className="text-xs uppercase tracking-wider text-[var(--muted)] mb-2">
-                Prefilled spec (display-only)
-              </div>
-              <pre className="border border-[var(--rule)] bg-[var(--rule-soft)] p-3 text-sm whitespace-pre-wrap font-mono">
-                {ex.prefilled.initial || '(empty)'}
-              </pre>
-            </div>
+            <PrefilledSpecPreview moment={moment} label="Prefilled spec (display-only)" />
           </div>
         </div>
       );
@@ -303,7 +298,7 @@ function ScreenPreview({
       const scenario = ex.scenarios[screen.idx];
       const prefilled = ex.prefilled.perScenario[screen.idx];
       const isRead = screen.kind === 'task_example_scenario_read';
-      const specText = isRead ? prefilled?.read : prefilled?.revise;
+      const moment = isRead ? prefilled?.read : prefilled?.revise;
       return (
         <div>
           <ExampleBannerInline />
@@ -316,27 +311,42 @@ function ScreenPreview({
                 <ClauseLine key={clause.id} clause={clause} />
               ))}
             </ul>
-            <div>
-              <div className="text-xs uppercase tracking-wider text-[var(--muted)] mb-2">
-                Prefilled spec — {isRead ? 'after reading' : 'after revising'}
-              </div>
-              <pre className="border border-[var(--rule)] bg-[var(--rule-soft)] p-3 text-sm whitespace-pre-wrap font-mono">
-                {specText || '(empty)'}
-              </pre>
-            </div>
+            <PrefilledSpecPreview
+              moment={moment}
+              label={`Prefilled spec — ${isRead ? 'after reading' : 'after revising'}`}
+            />
           </div>
         </div>
       );
     }
 
     case 'task_example_scenario_ponder': {
+      if (!isTaskLike(module) || module.type !== 'task_warmup' || !module.example)
+        return (
+          <div>
+            <ExampleBannerInline />
+            <div className="flex flex-col items-center text-center max-w-xl mx-auto py-12">
+              <h2 className="text-2xl font-medium tracking-tight mb-4">Pause</h2>
+              <p className="text-[var(--muted)] leading-relaxed">
+                The researcher pauses here to demonstrate ponder-then-revise.
+              </p>
+            </div>
+          </div>
+        );
+      const ex = module.example;
+      const override =
+        screen.idx != null
+          ? ex.prefilled.perScenario[screen.idx]?.ponderCopy?.trim()
+          : undefined;
       return (
         <div>
           <ExampleBannerInline />
           <div className="flex flex-col items-center text-center max-w-xl mx-auto py-12">
             <h2 className="text-2xl font-medium tracking-tight mb-4">Pause</h2>
-            <p className="text-[var(--muted)] leading-relaxed">
-              The researcher pauses here to demonstrate ponder-then-revise.
+            <p className="text-[var(--muted)] leading-relaxed whitespace-pre-wrap">
+              {override && override.length > 0
+                ? override
+                : 'The researcher pauses here to demonstrate ponder-then-revise.'}
             </p>
           </div>
         </div>
@@ -604,6 +614,53 @@ function ClauseLine({
 
 function Unsupported() {
   return <p className="italic text-[var(--muted)]">(unsupported)</p>;
+}
+
+function PrefilledSpecPreview({
+  moment,
+  label,
+}: {
+  moment: PrefilledMoment | undefined;
+  label: string;
+}) {
+  const m = moment ?? { spec: '', entities: [] };
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="text-xs uppercase tracking-wider text-[var(--muted)] mb-2">
+          {label}
+        </div>
+        <pre className="border border-[var(--rule)] bg-[var(--rule-soft)] p-3 text-sm whitespace-pre-wrap font-mono">
+          {m.spec || '(empty)'}
+        </pre>
+      </div>
+      <div>
+        <div className="text-xs uppercase tracking-wider text-[var(--muted)] mb-2">
+          Prefilled entities
+        </div>
+        {m.entities.length === 0 ? (
+          <p className="text-xs italic text-[var(--muted)]">(none)</p>
+        ) : (
+          <ul className="border border-[var(--rule)] bg-[var(--rule-soft)] p-3 text-sm space-y-2">
+            {m.entities.map((ent) => (
+              <li key={ent.id}>
+                <strong>{ent.name || <em>(unnamed entity)</em>}</strong>
+                {ent.elements.length > 0 && (
+                  <ul className="pl-4 mt-1 space-y-0.5">
+                    {ent.elements.map((el) => (
+                      <li key={el.id} className="text-[var(--muted)]">
+                        · {el.name || <em>(unnamed element)</em>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // Pre-study / global screens have no module. Render a faithful mock of what

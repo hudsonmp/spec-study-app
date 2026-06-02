@@ -12,6 +12,7 @@ import type {
   Module,
   TaskContent,
   TaskExample,
+  PrefilledMoment,
   ThinkAloudWarmupModule,
   RetrospectiveReportModule,
   Requirement,
@@ -775,7 +776,7 @@ function TaskRunner({
         scenario={scenario}
         scenarioIdx={step.idx}
         totalScenarios={example.scenarios.length}
-        prefilledSpec={prefilled?.read ?? ''}
+        moment={prefilled?.read}
         onContinue={next}
       />
     ) : (
@@ -784,7 +785,7 @@ function TaskRunner({
         scenario={scenario}
         scenarioIdx={step.idx}
         totalScenarios={example.scenarios.length}
-        prefilledSpec={prefilled?.revise ?? ''}
+        moment={prefilled?.revise}
         isLast={step.idx === example.scenarios.length - 1}
         onContinue={next}
       />
@@ -792,12 +793,14 @@ function TaskRunner({
   }
 
   if (step.kind === 'example_scenario_ponder') {
+    const perScenario = example?.prefilled.perScenario[step.idx];
     return (
       <PonderStep
         scenarioIdx={step.idx}
         totalScenarios={example?.scenarios.length ?? 0}
         onContinue={next}
         isExample
+        copyOverride={perScenario?.ponderCopy}
       />
     );
   }
@@ -1087,12 +1090,16 @@ function PonderStep({
   totalScenarios,
   onContinue,
   isExample = false,
+  copyOverride,
 }: {
   scenarioIdx: number;
   totalScenarios: number;
   onContinue: () => void;
   isExample?: boolean;
+  copyOverride?: string;
 }) {
+  const trimmed = copyOverride?.trim();
+  const showOverride = isExample && trimmed && trimmed.length > 0;
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {isExample && <ExampleBanner />}
@@ -1101,10 +1108,16 @@ function PonderStep({
           <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
             Scenario {scenarioIdx + 1} of {totalScenarios} · Pause and ponder
           </p>
-          <p className="text-2xl leading-relaxed">
-            Can you tell me everything you remember, or were thinking about, when
-            you analyzed the last scenario?
+          <p className="text-2xl leading-relaxed whitespace-pre-wrap">
+            {showOverride
+              ? trimmed
+              : 'Can you tell me everything you remember, or were thinking about, when you analyzed the last scenario?'}
           </p>
+          {isExample && !showOverride && (
+            <p className="text-xs italic text-[var(--muted)]">
+              (Example — researcher narrates)
+            </p>
+          )}
           <p className="text-sm italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-4 py-3">
             Please do not click Continue until your researcher tells you to.
           </p>
@@ -1226,6 +1239,7 @@ function ExampleInitialSpecStep({
   example: TaskExample;
   onContinue: () => void;
 }) {
+  const moment = example.prefilled.initial;
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <ExampleBanner />
@@ -1241,9 +1255,9 @@ function ExampleInitialSpecStep({
         <SplitHandle />
         <Panel defaultSize={50} minSize={30} maxSize={70}>
           <SpecColumn
-            spec={example.prefilled.initial}
+            spec={moment.spec}
             setSpec={() => {}}
-            entities={[]}
+            entities={moment.entities}
             setEntities={() => {}}
             specSavedAt={null}
             entitiesSavedAt={null}
@@ -1262,16 +1276,17 @@ function ExampleScenarioReadStep({
   scenario,
   scenarioIdx,
   totalScenarios,
-  prefilledSpec,
+  moment,
   onContinue,
 }: {
   example: TaskExample;
   scenario: Scenario;
   scenarioIdx: number;
   totalScenarios: number;
-  prefilledSpec: string;
+  moment: PrefilledMoment | undefined;
   onContinue: () => void;
 }) {
+  const m: PrefilledMoment = moment ?? { spec: '', entities: [] };
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <ExampleBanner />
@@ -1304,9 +1319,9 @@ function ExampleScenarioReadStep({
         <SplitHandle />
         <Panel defaultSize={45} minSize={25} maxSize={70}>
           <SpecColumn
-            spec={prefilledSpec}
+            spec={m.spec}
             setSpec={() => {}}
-            entities={[]}
+            entities={m.entities}
             setEntities={() => {}}
             specSavedAt={null}
             entitiesSavedAt={null}
@@ -1325,7 +1340,7 @@ function ExampleScenarioReviseStep({
   scenario,
   scenarioIdx,
   totalScenarios,
-  prefilledSpec,
+  moment,
   isLast,
   onContinue,
 }: {
@@ -1333,10 +1348,11 @@ function ExampleScenarioReviseStep({
   scenario: Scenario;
   scenarioIdx: number;
   totalScenarios: number;
-  prefilledSpec: string;
+  moment: PrefilledMoment | undefined;
   isLast: boolean;
   onContinue: () => void;
 }) {
+  const m: PrefilledMoment = moment ?? { spec: '', entities: [] };
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <ExampleBanner />
@@ -1372,9 +1388,9 @@ function ExampleScenarioReviseStep({
         <SplitHandle />
         <Panel defaultSize={45} minSize={25} maxSize={70}>
           <SpecColumn
-            spec={prefilledSpec}
+            spec={m.spec}
             setSpec={() => {}}
-            entities={[]}
+            entities={m.entities}
             setEntities={() => {}}
             specSavedAt={null}
             entitiesSavedAt={null}

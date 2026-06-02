@@ -218,7 +218,7 @@ export function enumerateScreens(content: ProjectContent): Screen[] {
           moduleLabel,
           kind: 'task_example_initial_spec',
           label: `Module ${moduleNumber} · Example · Initial spec`,
-          summary: snippet(ex.prefilled.initial || ex.initialSpec[0]?.prompt || ''),
+          summary: snippet(ex.prefilled.initial.spec || ex.initialSpec[0]?.prompt || ''),
         });
         ex.scenarios.forEach((sc, idx) => {
           TASK_EXAMPLE_STEPS_PER_SCENARIO.forEach((kind) => {

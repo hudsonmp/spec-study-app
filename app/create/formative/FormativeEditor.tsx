@@ -918,9 +918,13 @@ function TaskExampleEditor({
         typeof parsed !== 'object' ||
         !Array.isArray(parsed.scenarios) ||
         !parsed.prefilled ||
+        !parsed.prefilled.initial ||
+        typeof parsed.prefilled.initial !== 'object' ||
         !Array.isArray(parsed.prefilled.perScenario)
       ) {
-        setErr('Missing required fields (scenarios, prefilled.perScenario).');
+        setErr(
+          'Missing required fields (scenarios, prefilled.initial, prefilled.perScenario).',
+        );
         return;
       }
       setErr(null);
