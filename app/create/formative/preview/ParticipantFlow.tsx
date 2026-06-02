@@ -64,6 +64,62 @@ function makeSaveAdapter(
   };
 }
 
+// Write the cross-module "last spec" pointer when a task finishes. The
+// retrospective module reads from these localStorage keys on mount; the
+// server-side `_meta` row backs the pointer for lab-grade audit when the
+// participant has a live session AND the source module persists (warmups
+// don't). The 'task_complete_spec_snapshot' event mirrors the upsert in
+// the event log so we can replay completion order.
+function writeLastSpecPointer({
+  projectId,
+  moduleId,
+  participantId,
+  spec,
+  entitiesJson,
+  skipPersist = false,
+}: {
+  projectId: string;
+  moduleId: string;
+  participantId: string | null;
+  spec: string;
+  entitiesJson: string;
+  skipPersist?: boolean;
+}) {
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(`pf:${projectId}:last_spec`, spec);
+    window.localStorage.setItem(`pf:${projectId}:last_entities`, entitiesJson);
+    window.localStorage.setItem(
+      `pf:${projectId}:last_task_module_id`,
+      moduleId,
+    );
+  }
+  if (participantId === null) return;
+  void upsertResponseAction({
+    moduleId: '_meta',
+    sectionKey: 'last_spec',
+    value: spec,
+    skipPersist,
+  }).catch(() => {});
+  void upsertResponseAction({
+    moduleId: '_meta',
+    sectionKey: 'last_entities',
+    value: entitiesJson,
+    skipPersist,
+  }).catch(() => {});
+  void upsertResponseAction({
+    moduleId: '_meta',
+    sectionKey: 'last_task_module_id',
+    value: moduleId,
+    skipPersist,
+  }).catch(() => {});
+  void recordEventAction({
+    moduleId: '_meta',
+    eventType: 'task_complete_spec_snapshot',
+    payload: { sourceModuleId: moduleId, spec, entities: entitiesJson },
+    skipPersist,
+  }).catch(() => {});
+}
+
 function useLocalString(key: string): [string, (v: string) => void] {
   const [value, setValue] = useState('');
   const [hydrated, setHydrated] = useState(false);
@@ -232,7 +288,7 @@ export default function ParticipantFlow({
     >
       <ModuleRunner
         key={m.id}
-        projectId={project.id}
+        project={project}
         participantId={participantId}
         module={m}
         moduleNumber={moduleIdx + 1}
@@ -333,20 +389,21 @@ function ExampleBanner() {
 // ============================== Module dispatch =============================
 
 function ModuleRunner({
-  projectId,
+  project,
   participantId,
   module: m,
   moduleNumber,
   total,
   onComplete,
 }: {
-  projectId: string;
+  project: LoadedProject;
   participantId: string | null;
   module: Module;
   moduleNumber: number;
   total: number;
   onComplete: () => void;
 }) {
+  const projectId = project.id;
   const skipPersist = m.type === 'task_warmup';
   const save = useMemo(
     () => makeSaveAdapter(participantId, m.id, skipPersist),
@@ -385,6 +442,7 @@ function ModuleRunner({
     return (
       <TaskRunner
         projectId={projectId}
+        participantId={participantId}
         module={m}
         moduleNumber={moduleNumber}
         total={total}
@@ -397,6 +455,7 @@ function ModuleRunner({
     return (
       <RetrospectiveRunner
         projectId={projectId}
+        project={project}
         module={m}
         save={save}
         onComplete={complete}
@@ -613,6 +672,7 @@ function stepLabel(s: TaskStep): string {
 
 function TaskRunner({
   projectId,
+  participantId,
   module: m,
   moduleNumber,
   total,
@@ -621,6 +681,7 @@ function TaskRunner({
   onComplete,
 }: {
   projectId: string;
+  participantId: string | null;
   module: Extract<Module, { type: 'task' | 'task_warmup' }>;
   moduleNumber: number;
   total: number;
@@ -725,6 +786,14 @@ function TaskRunner({
       const nextIdx = step.idx + 1;
       if (nextIdx >= t.scenarios.length) {
         save.recordEvent('spec_snapshot', { at: 'final', value: spec });
+        writeLastSpecPointer({
+          projectId,
+          moduleId: m.id,
+          participantId,
+          spec,
+          entitiesJson,
+          skipPersist: isWarmup,
+        });
         return onComplete();
       }
       return transitionTo({ kind: 'scenario_read', idx: nextIdx });
@@ -1442,11 +1511,13 @@ function ExampleScenarioReviseStep({
 
 function RetrospectiveRunner({
   projectId,
+  project,
   module: m,
   save,
   onComplete,
 }: {
   projectId: string;
+  project: LoadedProject;
   module: RetrospectiveReportModule;
   save: SaveAdapter;
   onComplete: () => void;
@@ -1473,42 +1544,51 @@ function RetrospectiveRunner({
     window.localStorage.setItem(key, JSON.stringify(answers));
   }, [key, answers, hydrated]);
 
-  // Pull the most-recent spec / entities from localStorage. Retrospectives
-  // can follow any task module, so we look at all task-like modules in this
-  // project and surface whatever's there. Spec is the simple case; for
-  // entities we display the most recently authored set.
-  // To keep the spec lookup simple, we read the spec/entities saved under
-  // *any* module key on this project — surfacing whatever was last edited.
-  // The retrospective module itself doesn't own a spec.
+  // Source spec/entities come from the dedicated `last_*` pointer keys
+  // written by writeLastSpecPointer when the previous task module finished.
+  // If the participant skipped the task or is running the retrospective
+  // standalone, the keys will be missing and we render a "no specification
+  // recorded" placeholder.
   const [latestSpec, setLatestSpec] = useState<string>('');
   const [latestEntities, setLatestEntities] = useState<Entity[]>([]);
+  const [sourceModuleId, setSourceModuleId] = useState<string | null>(null);
   useEffect(() => {
-    // Scan localStorage for the most recent pf:<projectId>:*:spec key.
-    let bestSpec = '';
-    let bestEntities: Entity[] = [];
-    for (let i = 0; i < window.localStorage.length; i++) {
-      const k = window.localStorage.key(i);
-      if (!k) continue;
-      if (k.startsWith(`pf:${projectId}:`) && k.endsWith(':spec')) {
-        const v = window.localStorage.getItem(k) ?? '';
-        if (v.length > bestSpec.length) bestSpec = v;
-      }
-      if (k.startsWith(`pf:${projectId}:`) && k.endsWith(':entities')) {
-        try {
-          const parsed = JSON.parse(
-            window.localStorage.getItem(k) ?? '[]',
-          ) as Entity[];
-          if (Array.isArray(parsed) && parsed.length > bestEntities.length) {
-            bestEntities = parsed;
-          }
-        } catch {
-          /* ignore */
-        }
+    const spec = window.localStorage.getItem(`pf:${projectId}:last_spec`);
+    const entitiesRaw = window.localStorage.getItem(
+      `pf:${projectId}:last_entities`,
+    );
+    const srcId = window.localStorage.getItem(
+      `pf:${projectId}:last_task_module_id`,
+    );
+    if (spec !== null) setLatestSpec(spec);
+    if (entitiesRaw !== null) {
+      try {
+        const parsed = JSON.parse(entitiesRaw) as Entity[];
+        if (Array.isArray(parsed)) setLatestEntities(parsed);
+      } catch {
+        /* ignore */
       }
     }
-    setLatestSpec(bestSpec);
-    setLatestEntities(bestEntities);
+    if (srcId) setSourceModuleId(srcId);
   }, [projectId]);
+
+  // Resolve the source module's label so the locked spec block can be
+  // titled "Specification from Module N — <title>".
+  const sourceModuleCaption = useMemo(() => {
+    if (!sourceModuleId) return null;
+    const idx = project.content.modules.findIndex(
+      (mod) => mod.id === sourceModuleId,
+    );
+    if (idx < 0) return null;
+    const mod = project.content.modules[idx];
+    const title =
+      'title' in mod && typeof mod.title === 'string' && mod.title.length > 0
+        ? mod.title
+        : MODULE_TYPE_LABEL[mod.type];
+    return `Specification from Module ${idx + 1} — ${title}`;
+  }, [sourceModuleId, project.content.modules]);
+
+  const specHasContent = latestSpec.length > 0 || latestEntities.length > 0;
 
   // Per-question debounced save
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -1593,16 +1673,29 @@ function RetrospectiveRunner({
       </Panel>
       <SplitHandle />
       <Panel defaultSize={50} minSize={30} maxSize={70}>
-        <SpecColumn
-          spec={latestSpec}
-          setSpec={() => {}}
-          entities={latestEntities}
-          setEntities={() => {}}
-          specSavedAt={null}
-          entitiesSavedAt={null}
-          readOnly
-          headerNote="Your specification (read-only during retrospective)"
-        />
+        <div className="h-full flex flex-col gap-2 overflow-y-auto min-h-0 pl-3">
+          {sourceModuleCaption && (
+            <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
+              {sourceModuleCaption}
+            </p>
+          )}
+          {specHasContent ? (
+            <SpecColumn
+              spec={latestSpec}
+              setSpec={() => {}}
+              entities={latestEntities}
+              setEntities={() => {}}
+              specSavedAt={null}
+              entitiesSavedAt={null}
+              readOnly
+              headerNote="Your specification (read-only during retrospective)"
+            />
+          ) : (
+            <div className="border border-dashed border-[var(--rule)] bg-[var(--rule-soft)] p-6 text-sm italic text-[var(--muted)]">
+              (no specification recorded)
+            </div>
+          )}
+        </div>
       </Panel>
     </PanelGroup>
   );
