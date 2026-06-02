@@ -23,6 +23,19 @@ export function shellProjectContent(): ProjectContent {
         mandatory: false,
       },
       {
+        // Worked example of thinking aloud — display-only, researcher narrates.
+        id: uid(),
+        type: 'think_aloud_example',
+        title: '<title for the think-aloud worked example>',
+        taskDescription:
+          '<intro shown on the example screen, or leave empty if narrated>',
+        body: '<the example body the researcher walks through>',
+        revealedTask: '<scrambled word, e.g. NPEPHA>',
+        revealedAnswer: '<unscrambled answer, e.g. HAPPEN>',
+        walkthroughText:
+          '<what the researcher says while demonstrating the think-aloud>',
+      },
+      {
         id: uid(),
         type: 'task_warmup',
         title: '<title for the task warmup>',
@@ -58,6 +71,50 @@ export function shellProjectContent(): ProjectContent {
             ],
           },
         ],
+      },
+      {
+        // Worked example task — display-only, researcher walks through it with
+        // prefilled spec/entities at each moment. Place it before the warmup.
+        id: uid(),
+        type: 'task_example',
+        title: '<title for the worked example task>',
+        studyContext:
+          '<researcher-only framing — hidden from the participant on example screens>',
+        walkthroughText:
+          '<what the researcher says on the example intro screen>',
+        requirements: [
+          { id: uid(), role: '<role>', want: '<capability>', so: '<purpose>' },
+        ],
+        initialSpec: [
+          {
+            id: uid(),
+            prompt: '<initial-spec prompt for the example>',
+            boxHeight: 2.5,
+          },
+        ],
+        scenarios: [
+          {
+            id: uid(),
+            title: '<example scenario title>',
+            facilitatorNote: '<researcher-only note>',
+            clauses: [
+              { id: uid(), type: 'Given', text: '<given clause>' },
+              { id: uid(), type: 'When', text: '<when clause>' },
+              { id: uid(), type: 'Then', text: '<then clause>' },
+            ],
+          },
+        ],
+        // Display-only snapshots shown at each moment. perScenario length must
+        // equal scenarios length.
+        prefilled: {
+          initial: { spec: '<prefilled spec shown initially>', entities: [] },
+          perScenario: [
+            {
+              read: { spec: '<spec after reading the scenario>', entities: [] },
+              revise: { spec: '<spec after revising>', entities: [] },
+            },
+          ],
+        },
       },
       {
         id: uid(),

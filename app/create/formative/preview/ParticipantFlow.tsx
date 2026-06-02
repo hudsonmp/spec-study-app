@@ -1042,15 +1042,20 @@ function ThinkAloudWarmupRunner({
             </p>
           )}
           <div className="mt-auto pt-4 flex gap-3">
-            {phase === 'body' && m.revealedTask && (
-              <button
-                type="button"
-                onClick={() => advanceTo('revealed')}
-                className="border border-[var(--foreground)] px-4 py-2 hover:bg-[var(--foreground)] hover:text-[var(--background)] transition"
-              >
-                {copy.revealButtonLabel}
-              </button>
-            )}
+            {phase === 'body' &&
+              (m.revealedTask ? (
+                <button
+                  type="button"
+                  onClick={() => advanceTo('revealed')}
+                  className="border border-[var(--foreground)] px-4 py-2 hover:bg-[var(--foreground)] hover:text-[var(--background)] transition"
+                >
+                  {copy.revealButtonLabel}
+                </button>
+              ) : (
+                // No anagram authored — still give the participant a way
+                // forward instead of stranding them on the body screen.
+                <ContinueButton onClick={() => advanceTo('revealed')} />
+              ))}
             {phase === 'revealed' && <ContinueButton onClick={finish} />}
           </div>
         </section>
