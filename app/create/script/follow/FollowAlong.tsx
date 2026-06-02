@@ -18,15 +18,18 @@ export default function FollowAlong({
   content,
   screens,
   scripts,
+  referenceScript,
 }: {
   projectId: string;
   projectName: string;
   content: ProjectContent;
   screens: Screen[];
   scripts: Record<string, string>;
+  referenceScript: string;
 }) {
   const [idx, setIdx] = useState(0);
   const [railOpen, setRailOpen] = useState(true);
+  const [refOpen, setRefOpen] = useState(true);
   const screen = screens[idx];
 
   if (!screen) {
@@ -110,6 +113,20 @@ export default function FollowAlong({
         <aside className="border-l border-[var(--rule)] bg-[var(--panel)] overflow-y-auto">
           {railOpen ? (
             <div className="p-4">
+              <details
+                open={refOpen}
+                onToggle={(e) =>
+                  setRefOpen((e.target as HTMLDetailsElement).open)
+                }
+                className="mb-4 border border-dashed border-[var(--rule)] p-3"
+              >
+                <summary className="text-xs uppercase tracking-wider text-[var(--muted)] cursor-pointer">
+                  Think-aloud reference (SIGCSE)
+                </summary>
+                <p className="whitespace-pre-wrap leading-relaxed text-sm mt-2">
+                  {referenceScript}
+                </p>
+              </details>
               <div className="text-xs uppercase tracking-wider text-[var(--muted)] mb-2">
                 Researcher script
               </div>

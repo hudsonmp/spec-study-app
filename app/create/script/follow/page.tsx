@@ -4,6 +4,7 @@ import { migrateContent } from '@/lib/study/reducer';
 import { enumerateScreens } from '@/lib/study/screens';
 import { listScriptsForStudy } from '../actions';
 import FollowAlong from './FollowAlong';
+import { SIGCSE_THINK_ALOUD_PROTOCOL } from '@/lib/scripts/sigcse-doc';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +42,7 @@ export default async function FollowPage({
       content={content}
       screens={screens}
       scripts={scripts}
+      referenceScript={SIGCSE_THINK_ALOUD_PROTOCOL}
     />
   );
 }
