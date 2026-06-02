@@ -37,6 +37,9 @@ export function migrateContent(input: unknown): ProjectContent {
       ) {
         return { ...m, revealedTask: '' } as Module;
       }
+      // example is optional on think_aloud_warmup and task_warmup; back-compat
+      // is automatic — older payloads simply lack the field. No-op kept here
+      // as a hook for future shape evolutions.
       return m;
     });
     return { modules };

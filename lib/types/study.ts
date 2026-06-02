@@ -109,6 +109,16 @@ export type ModuleType =
   | 'task'
   | 'retrospective_report';
 
+// Researcher-authored walkthrough variant for the think-aloud warmup. When
+// present, the participant sees the example (read-only) BEFORE the real
+// warmup runs. Banner shown across every example screen.
+export type ThinkAloudExample = {
+  altTaskDescription: string;
+  altBody: string;
+  altRevealedTask: string;
+  walkthroughText: string;
+};
+
 export type ThinkAloudWarmupModule = {
   id: string;
   type: 'think_aloud_warmup';
@@ -116,8 +126,9 @@ export type ThinkAloudWarmupModule = {
   taskDescription: string;
   body: string;
   revealedTask: string;
-  includeScratchPaper: boolean;
+  includeScratchPaper: boolean; // ignored — scratchpad removed; kept for back-compat
   mandatory: boolean;
+  example?: ThinkAloudExample;
 };
 
 // Shared task-shaped content. Used by both Task and TaskWarmup (warmup is the
@@ -132,6 +143,34 @@ export type TaskContent = {
   scenarios: Scenario[]; // 1-3 enforced by the editor
 };
 
+// Researcher-authored prefilled spec text shown at each major moment of the
+// example task. Snapshots are display-only — the participant cannot edit on
+// example screens. perScenario length must equal example.scenarios.length.
+export type TaskExamplePrefilled = {
+  initial: string;
+  perScenario: { read: string; revise: string }[];
+};
+
+export type TaskExample = TaskContent & {
+  prefilled: TaskExamplePrefilled;
+};
+
+// =========================== Entity / Element table ===========================
+// Embedded under the spec textarea on every spec-bearing screen. Researcher
+// does not author these; the participant fills them in as they reason about
+// the system's data model. Persisted alongside the spec.
+
+export type Element = {
+  id: string;
+  name: string;
+};
+
+export type Entity = {
+  id: string;
+  name: string;
+  elements: Element[];
+};
+
 export type RetrospectiveReportModule = {
   id: string;
   type: 'retrospective_report';
@@ -142,6 +181,7 @@ export type RetrospectiveReportModule = {
 export type TaskWarmupModule = {
   id: string;
   type: 'task_warmup';
+  example?: TaskExample;
 } & TaskContent;
 
 export type TaskModule = {
@@ -219,6 +259,41 @@ function newTaskContent(): TaskContent {
         boxHeight: 2.5,
       },
     ],
+  };
+}
+
+export function newThinkAloudExample(): ThinkAloudExample {
+  return {
+    altTaskDescription: '',
+    altBody: '',
+    altRevealedTask: '',
+    walkthroughText: '',
+  };
+}
+
+export function newTaskExample(scenariosLen = 1): TaskExample {
+  const base = newTaskContent();
+  // Ensure the example carries `scenariosLen` scenarios so prefilled.perScenario
+  // can be authored 1:1 against them. If 0 is passed, force 1.
+  const n = Math.max(1, scenariosLen);
+  while (base.scenarios.length < n) {
+    base.scenarios.push({
+      id: uid(),
+      title: `Scenario ${base.scenarios.length + 1}`,
+      facilitatorNote: '',
+      clauses: [
+        { id: uid(), type: 'Given', text: '' },
+        { id: uid(), type: 'When', text: '' },
+        { id: uid(), type: 'Then', text: '' },
+      ],
+    });
+  }
+  return {
+    ...base,
+    prefilled: {
+      initial: '',
+      perScenario: Array.from({ length: n }, () => ({ read: '', revise: '' })),
+    },
   };
 }
 
