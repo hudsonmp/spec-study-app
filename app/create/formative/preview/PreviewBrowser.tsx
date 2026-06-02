@@ -11,9 +11,13 @@ import ParticipantFlow from './ParticipantFlow';
 export default function PreviewBrowser({
   project,
   allProjects,
+  scripts,
+  referenceScript,
 }: {
   project: LoadedProject;
   allProjects: LoadedProject[];
+  scripts?: Record<string, string>;
+  referenceScript?: string;
 }) {
   return (
     <div className="flex flex-col h-screen">
@@ -25,7 +29,7 @@ export default function PreviewBrowser({
           ← Editor
         </Link>
         <span className="text-[var(--muted)]">·</span>
-        <span className="font-medium">Preview</span>
+        <span className="font-medium">Preview &amp; walkthrough</span>
         {allProjects.length > 1 && (
           <label className="text-[var(--muted)] flex items-center gap-2">
             Project:
@@ -39,11 +43,16 @@ export default function PreviewBrowser({
           className="ml-auto italic text-[var(--muted)] underline hover:no-underline"
           title="Open the live participant flow in a new tab."
         >
-          Interactive (live) ↗
+          Live ↗
         </Link>
       </header>
       <div className="flex-1 min-h-0">
-        <ParticipantFlow project={project} previewMode />
+        <ParticipantFlow
+          project={project}
+          previewMode
+          scripts={scripts}
+          referenceScript={referenceScript}
+        />
       </div>
     </div>
   );

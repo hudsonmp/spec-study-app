@@ -13,8 +13,10 @@ import type {
   Module,
   TaskContent,
   TaskExample,
+  TaskExampleModule,
   PrefilledMoment,
   ThinkAloudWarmupModule,
+  ThinkAloudExampleModule,
   RetrospectiveReportModule,
   Requirement,
   Scenario,
@@ -24,6 +26,7 @@ import type {
 import {
   MODULE_TYPE_LABEL,
   uid,
+  isPersistedToDb,
   DEFAULT_WARMUP_COPY,
   DEFAULT_TASK_COPY,
 } from '@/lib/types/study';
@@ -173,6 +176,37 @@ function useLocalEntities(
   return [value, setValue];
 }
 
+// Record<string,string> persisted under one key. Used for per-scenario
+// retrospective answers, keyed by `<scenarioIdx>:<questionIdx>`.
+function useLocalRecord(
+  key: string,
+): [Record<string, string>, (k: string, v: string) => void] {
+  const [value, setValue] = useState<Record<string, string>>({});
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(key);
+    if (stored !== null) {
+      try {
+        const parsed = JSON.parse(stored) as Record<string, string>;
+        if (parsed && typeof parsed === 'object') setValue(parsed);
+      } catch {
+        /* ignore */
+      }
+    }
+    setHydrated(true);
+  }, [key]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    window.localStorage.setItem(key, JSON.stringify(value));
+  }, [key, value, hydrated]);
+
+  const set = (k: string, v: string) =>
+    setValue((prev) => ({ ...prev, [k]: v }));
+  return [value, set];
+}
+
 function useSavedAt(): [string | null, () => void] {
   const [at, setAt] = useState<string | null>(null);
   function mark() {
@@ -204,8 +238,9 @@ function SplitHandle() {
   );
 }
 
-const SPEC_PLACEHOLDER =
-  'Specify the rules, types of information, behavior, features, and implementation of the system however feels natural to you. This may include inputs/outputs, data types, pseudocode, prompts to an LLM coding agent, or anything else that feels natural.';
+// Single source of truth for the default spec caption lives in the type
+// module so the editor's placeholder and the runtime caption never drift.
+const SPEC_PLACEHOLDER = DEFAULT_TASK_COPY.specPlaceholder;
 
 const EXAMPLE_BANNER_TEXT = 'Example — the researcher will walk through this';
 
@@ -232,6 +267,8 @@ export default function ParticipantFlow({
   project,
   participantId = null,
   previewMode = false,
+  scripts,
+  referenceScript = '',
 }: {
   project: LoadedProject;
   participantId?: string | null;
@@ -240,9 +277,19 @@ export default function ParticipantFlow({
   // remount on screen change instead of advancing internal state. NEVER
   // pass true on the live /study route — it disables sequential persistence.
   previewMode?: boolean;
+  // Per-screen researcher scripts + SIGCSE reference — only used in preview
+  // mode to render the script rail (the merged Follow-along view).
+  scripts?: Record<string, string>;
+  referenceScript?: string;
 }) {
   if (previewMode) {
-    return <PreviewParticipantFlow project={project} />;
+    return (
+      <PreviewParticipantFlow
+        project={project}
+        scripts={scripts}
+        referenceScript={referenceScript}
+      />
+    );
   }
   return (
     <SequentialParticipantFlow project={project} participantId={participantId} />
@@ -332,19 +379,18 @@ function SequentialParticipantFlow({
 // onAdvance() which bumps screenIdx; the key={screen.key} remount strategy
 // resets internal step state to match the new screen.
 
+// Warmup (real) and think-aloud-example screens both map to the same 3-phase
+// flow — they're rendered by different runners but share the phase names.
 function screenToWarmupPhase(screen: Screen): WarmupPhase {
   switch (screen.kind) {
-    case 'warmup_example_intro':
-      return 'example_intro';
-    case 'warmup_example_body':
-      return 'example_body';
-    case 'warmup_example_revealed':
-      return 'example_revealed';
     case 'warmup_intro':
+    case 'warmup_example_intro':
       return 'intro';
     case 'warmup_body':
+    case 'warmup_example_body':
       return 'body';
     case 'warmup_revealed':
+    case 'warmup_example_revealed':
       return 'revealed';
     default:
       return 'intro';
@@ -366,22 +412,48 @@ function screenToTaskStep(screen: Screen): TaskStep {
       return { kind: 'scenario_ponder', idx };
     case 'task_scenario_revise':
       return { kind: 'scenario_revise', idx };
-    case 'task_example_intro':
-      return { kind: 'example_intro' };
-    case 'task_example_initial_spec':
-      return { kind: 'example_initial_spec' };
-    case 'task_example_scenario_read':
-      return { kind: 'example_scenario_read', idx };
-    case 'task_example_scenario_ponder':
-      return { kind: 'example_scenario_ponder', idx };
-    case 'task_example_scenario_revise':
-      return { kind: 'example_scenario_revise', idx };
+    case 'task_scenario_retro':
+      return { kind: 'scenario_retro', idx, qIdx: screen.subIdx ?? 0 };
     default:
       return { kind: 'intro' };
   }
 }
 
-function PreviewParticipantFlow({ project }: { project: LoadedProject }) {
+// Worked-example task step machine — display-only mirror of the real task.
+type ExStep =
+  | { kind: 'intro' }
+  | { kind: 'initial_spec' }
+  | { kind: 'scenario_read'; idx: number }
+  | { kind: 'scenario_ponder'; idx: number }
+  | { kind: 'scenario_revise'; idx: number };
+
+function screenToExampleStep(screen: Screen): ExStep {
+  const idx = screen.idx ?? 0;
+  switch (screen.kind) {
+    case 'task_example_intro':
+      return { kind: 'intro' };
+    case 'task_example_initial_spec':
+      return { kind: 'initial_spec' };
+    case 'task_example_scenario_read':
+      return { kind: 'scenario_read', idx };
+    case 'task_example_scenario_ponder':
+      return { kind: 'scenario_ponder', idx };
+    case 'task_example_scenario_revise':
+      return { kind: 'scenario_revise', idx };
+    default:
+      return { kind: 'intro' };
+  }
+}
+
+function PreviewParticipantFlow({
+  project,
+  scripts,
+  referenceScript = '',
+}: {
+  project: LoadedProject;
+  scripts?: Record<string, string>;
+  referenceScript?: string;
+}) {
   // Drop globals — those are real /register and /onboard pages, not
   // ParticipantFlow screens. The preview lets you navigate module screens
   // with full participant fidelity.
@@ -417,7 +489,7 @@ function PreviewParticipantFlow({ project }: { project: LoadedProject }) {
 
   if (!screen) {
     return (
-      <Shell projectName={project.name}>
+      <Shell projectName={project.name} fill>
         <Centered>
           <p className="italic text-[var(--muted)]">
             This project has no module screens yet.{' '}
@@ -437,7 +509,7 @@ function PreviewParticipantFlow({ project }: { project: LoadedProject }) {
   const m = project.content.modules[moduleIdx];
   if (!m) {
     return (
-      <Shell projectName={project.name}>
+      <Shell projectName={project.name} fill>
         <Centered>
           <p className="italic text-[var(--muted)]">
             (Screen references a module that no longer exists — try jumping
@@ -449,11 +521,6 @@ function PreviewParticipantFlow({ project }: { project: LoadedProject }) {
   }
 
   const screenId = `${screen.moduleNumber}.${localIndex.get(screen.key) ?? '?'}`;
-  // No persistence in preview — pass a null participantId so makeSaveAdapter
-  // returns a no-op adapter. Spec/entities still hit localStorage via
-  // useLocalString/useLocalEntities, which is the desired behavior because
-  // the researcher can type into the preview to feel out the participant flow.
-  const save = makeSaveAdapter(null, m.id, true);
   const advance = () =>
     setScreenIdx((i) => Math.min(screens.length - 1, i + 1));
 
@@ -463,6 +530,7 @@ function PreviewParticipantFlow({ project }: { project: LoadedProject }) {
       moduleLabel={MODULE_TYPE_LABEL[m.type]}
       moduleNumber={moduleIdx + 1}
       total={project.content.modules.length}
+      fill
       previewControls={
         <PreviewControls
           screens={screens}
@@ -472,47 +540,84 @@ function PreviewParticipantFlow({ project }: { project: LoadedProject }) {
           localIndex={localIndex}
         />
       }
+      rail={
+        scripts ? (
+          <ScriptRail
+            screenId={screenId}
+            script={scripts[screen.key] ?? ''}
+            referenceScript={referenceScript}
+          />
+        ) : undefined
+      }
     >
-      {m.type === 'think_aloud_warmup' ? (
-        <ThinkAloudWarmupRunner
-          key={screen.key}
-          projectId={project.id}
-          module={m}
-          save={save}
-          onComplete={advance}
-          initialPhase={screenToWarmupPhase(screen)}
-          controlled
-          onAdvance={advance}
-        />
-      ) : m.type === 'task' || m.type === 'task_warmup' ? (
-        <TaskRunner
-          key={screen.key}
-          projectId={project.id}
-          participantId={null}
-          module={m}
-          moduleNumber={moduleIdx + 1}
-          total={project.content.modules.length}
-          isWarmup={m.type === 'task_warmup'}
-          save={save}
-          onComplete={advance}
-          initialStep={screenToTaskStep(screen)}
-          controlled
-          onAdvance={advance}
-        />
-      ) : m.type === 'retrospective_report' ? (
-        <RetrospectiveRunner
-          key={screen.key}
-          projectId={project.id}
-          project={project}
-          module={m}
-          save={save}
-          onComplete={advance}
-          initialStepIdx={screen.idx ?? 0}
-          controlled
-          onAdvance={advance}
-        />
-      ) : null}
+      {/* key={screen.key} forces a remount on screen change so the runner's
+          internal step state resets to the new initialScreen. Spec/entity
+          localStorage survives because its keys are (projectId, moduleId). */}
+      <ModuleRunner
+        key={screen.key}
+        project={project}
+        participantId={null}
+        module={m}
+        moduleNumber={moduleIdx + 1}
+        total={project.content.modules.length}
+        onComplete={advance}
+        controlled
+        onAdvance={advance}
+        initialScreen={screen}
+      />
     </Shell>
+  );
+}
+
+// Per-screen researcher script (top) + collapsible SIGCSE reference (below).
+// Mirrors the old Follow-along rail but lives inside the preview so the
+// researcher reads the script while watching the real participant screen.
+function ScriptRail({
+  screenId,
+  script,
+  referenceScript,
+}: {
+  screenId: string;
+  script: string;
+  referenceScript: string;
+}) {
+  const [refOpen, setRefOpen] = useState(false);
+  return (
+    <aside className="h-full overflow-y-auto bg-[var(--panel)] p-4">
+      <div className="flex items-baseline gap-2 mb-2">
+        <span className="text-xs font-mono tabular-nums text-[var(--accent)]">
+          {screenId}
+        </span>
+        <span className="text-xs uppercase tracking-wider text-[var(--muted)]">
+          Researcher script
+        </span>
+      </div>
+      {script ? (
+        <p className="whitespace-pre-wrap leading-relaxed mb-6">{script}</p>
+      ) : (
+        <p className="italic text-[var(--muted)] mb-6">
+          No script for this screen yet.{' '}
+          <Link href="/create/script" className="underline hover:no-underline">
+            Add one
+          </Link>
+          .
+        </p>
+      )}
+      {referenceScript && (
+        <details
+          open={refOpen}
+          onToggle={(e) => setRefOpen((e.target as HTMLDetailsElement).open)}
+          className="border border-dashed border-[var(--rule)] p-3"
+        >
+          <summary className="text-xs uppercase tracking-wider text-[var(--muted)] cursor-pointer">
+            Think-aloud reference (SIGCSE)
+          </summary>
+          <p className="whitespace-pre-wrap leading-relaxed text-sm mt-2">
+            {referenceScript}
+          </p>
+        </details>
+      )}
+    </aside>
   );
 }
 
@@ -580,6 +685,8 @@ function Shell({
   total,
   showSignOut = false,
   previewControls,
+  rail,
+  fill = false,
   children,
 }: {
   projectName: string;
@@ -588,11 +695,22 @@ function Shell({
   total?: number;
   showSignOut?: boolean;
   previewControls?: React.ReactNode;
+  // Optional resizable rail to the right of the main content (preview only —
+  // hosts the per-screen researcher script). Live /study never passes it.
+  rail?: React.ReactNode;
+  // `fill` (preview) makes the shell fill its parent (which sits below the
+  // PreviewBrowser top bar). Live /study leaves it false → min-h-screen.
+  fill?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen flex flex-col bg-[var(--background)] text-[var(--foreground)]">
-      <header className="sticky top-0 z-10 border-b border-[var(--rule)] bg-[var(--panel)] px-6 py-3 flex justify-between items-center gap-4 flex-wrap">
+    <div
+      className={
+        (fill ? 'h-full overflow-hidden' : 'min-h-screen') +
+        ' flex flex-col bg-[var(--background)] text-[var(--foreground)]'
+      }
+    >
+      <header className="shrink-0 border-b border-[var(--rule)] bg-[var(--panel)] px-6 py-3 flex justify-between items-center gap-4 flex-wrap">
         <div className="flex items-baseline gap-3 min-w-0">
           <UtcClock />
           <h1 className="text-lg font-medium tracking-tight truncate">
@@ -618,9 +736,23 @@ function Shell({
           )}
         </div>
       </header>
-      <main className="flex-1 flex flex-col p-6 gap-4 overflow-hidden">
-        {children}
-      </main>
+      {rail ? (
+        <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
+          <Panel defaultSize={72} minSize={40}>
+            <div className="h-full flex flex-col p-6 gap-4 overflow-hidden">
+              {children}
+            </div>
+          </Panel>
+          <SplitHandle />
+          <Panel defaultSize={28} minSize={15} maxSize={55}>
+            {rail}
+          </Panel>
+        </PanelGroup>
+      ) : (
+        <main className="flex-1 flex flex-col p-6 gap-4 overflow-hidden">
+          {children}
+        </main>
+      )}
     </div>
   );
 }
@@ -672,6 +804,9 @@ function ModuleRunner({
   moduleNumber,
   total,
   onComplete,
+  controlled = false,
+  onAdvance,
+  initialScreen,
 }: {
   project: LoadedProject;
   participantId: string | null;
@@ -679,9 +814,14 @@ function ModuleRunner({
   moduleNumber: number;
   total: number;
   onComplete: () => void;
+  // Controlled (preview) mode: each Continue calls onAdvance instead of
+  // mutating internal step state; the parent re-mounts with the next screen.
+  controlled?: boolean;
+  onAdvance?: () => void;
+  initialScreen?: Screen;
 }) {
   const projectId = project.id;
-  const skipPersist = m.type === 'task_warmup';
+  const skipPersist = !isPersistedToDb(m.type);
   const save = useMemo(
     () => makeSaveAdapter(participantId, m.id, skipPersist),
     [participantId, m.id, skipPersist],
@@ -713,6 +853,20 @@ function ModuleRunner({
         module={m}
         save={save}
         onComplete={complete}
+        initialPhase={initialScreen ? screenToWarmupPhase(initialScreen) : undefined}
+        controlled={controlled}
+        onAdvance={onAdvance}
+      />
+    );
+  if (m.type === 'think_aloud_example')
+    return (
+      <ThinkAloudExampleRunner
+        module={m}
+        save={save}
+        onComplete={complete}
+        initialPhase={initialScreen ? screenToWarmupPhase(initialScreen) : undefined}
+        controlled={controlled}
+        onAdvance={onAdvance}
       />
     );
   if (m.type === 'task' || m.type === 'task_warmup')
@@ -726,6 +880,20 @@ function ModuleRunner({
         isWarmup={m.type === 'task_warmup'}
         save={save}
         onComplete={complete}
+        initialStep={initialScreen ? screenToTaskStep(initialScreen) : undefined}
+        controlled={controlled}
+        onAdvance={onAdvance}
+      />
+    );
+  if (m.type === 'task_example')
+    return (
+      <TaskExampleRunner
+        module={m}
+        save={save}
+        onComplete={complete}
+        initialStep={initialScreen ? screenToExampleStep(initialScreen) : undefined}
+        controlled={controlled}
+        onAdvance={onAdvance}
       />
     );
   if (m.type === 'retrospective_report')
@@ -736,6 +904,9 @@ function ModuleRunner({
         module={m}
         save={save}
         onComplete={complete}
+        initialStepIdx={initialScreen?.idx ?? 0}
+        controlled={controlled}
+        onAdvance={onAdvance}
       />
     );
   return null;
@@ -744,14 +915,22 @@ function ModuleRunner({
 // =========================== Think-aloud warmup =========================
 
 // Warmup phases — declared at module level so the preview wrapper can
-// translate screen.kind -> Phase without duplicating the union.
-type WarmupPhase =
-  | 'example_intro'
-  | 'example_body'
-  | 'example_revealed'
-  | 'intro'
-  | 'body'
-  | 'revealed';
+// translate screen.kind -> Phase without duplicating the union. Both the
+// real warmup and the worked-example module use the same three phases.
+type WarmupPhase = 'intro' | 'body' | 'revealed';
+
+function resolveWarmupCopy(copy: ThinkAloudWarmupModule['copy']) {
+  return {
+    introTitle: copy?.introTitle?.trim() || DEFAULT_WARMUP_COPY.introTitle,
+    introBody: copy?.introBody?.trim() || DEFAULT_WARMUP_COPY.introBody,
+    revealButtonLabel:
+      copy?.revealButtonLabel?.trim() || DEFAULT_WARMUP_COPY.revealButtonLabel,
+    postRevealCallout:
+      copy?.postRevealCallout?.trim() || DEFAULT_WARMUP_COPY.postRevealCallout,
+    answerInputLabel:
+      copy?.answerInputLabel?.trim() || DEFAULT_WARMUP_COPY.answerInputLabel,
+  };
+}
 
 function ThinkAloudWarmupRunner({
   projectId,
@@ -773,18 +952,7 @@ function ThinkAloudWarmupRunner({
   controlled?: boolean;
   onAdvance?: () => void;
 }) {
-  // Resolve overridable copy with fallback to defaults. Every render reads
-  // through `copy.*` — never read DEFAULT_WARMUP_COPY directly downstream.
-  const copy = {
-    introTitle: m.copy?.introTitle?.trim() || DEFAULT_WARMUP_COPY.introTitle,
-    introBody: m.copy?.introBody?.trim() || DEFAULT_WARMUP_COPY.introBody,
-    revealButtonLabel:
-      m.copy?.revealButtonLabel?.trim() || DEFAULT_WARMUP_COPY.revealButtonLabel,
-    postRevealCallout:
-      m.copy?.postRevealCallout?.trim() || DEFAULT_WARMUP_COPY.postRevealCallout,
-    answerInputLabel:
-      m.copy?.answerInputLabel?.trim() || DEFAULT_WARMUP_COPY.answerInputLabel,
-  };
+  const copy = resolveWarmupCopy(m.copy);
   // Participant's typed anagram answer, persisted locally so reload doesn't
   // erase. Compared to m.revealedAnswer for analysis logging; not gating.
   const [answer, setAnswer] = useLocalString(
@@ -798,110 +966,20 @@ function ThinkAloudWarmupRunner({
       client_ts: new Date().toISOString(),
     });
   });
-  // Example phases come first when authored; then the real 3-phase flow.
-  type Phase = WarmupPhase;
-  const initial: Phase =
-    initialPhase ?? (m.example ? 'example_intro' : 'intro');
-  const [phase, setPhase] = useState<Phase>(initial);
+  const [phase, setPhase] = useState<WarmupPhase>(initialPhase ?? 'intro');
 
-  function advanceTo(next: Phase) {
+  function advanceTo(next: WarmupPhase) {
     save.recordEvent('step_advance', { from: phase, to: next });
-    if (controlled) {
-      onAdvance?.();
-    } else {
-      setPhase(next);
-    }
+    if (controlled) onAdvance?.();
+    else setPhase(next);
   }
 
   function finish() {
     save.recordEvent('step_advance', { from: phase, to: 'done' });
-    if (controlled) {
-      onAdvance?.();
-    } else {
-      onComplete();
-    }
+    if (controlled) onAdvance?.();
+    else onComplete();
   }
 
-  // ============ Example phases ============
-  if (phase === 'example_intro' && m.example) {
-    return (
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <ExampleBanner />
-        <Centered>
-          <h2 className="text-2xl font-medium tracking-tight mb-4">
-            {copy.introTitle}
-          </h2>
-          <p className="text-[var(--muted)] leading-relaxed mb-8">
-            The researcher will demonstrate the think-aloud method.
-          </p>
-          <ContinueButton onClick={() => advanceTo('example_body')} />
-        </Centered>
-      </div>
-    );
-  }
-
-  if ((phase === 'example_body' || phase === 'example_revealed') && m.example) {
-    const ex = m.example;
-    const revealed = phase === 'example_revealed';
-    return (
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <ExampleBanner />
-        <div className="flex-1 flex justify-center overflow-hidden min-h-0">
-          <div className="max-w-2xl w-full flex flex-col gap-4 overflow-hidden">
-            <section className="flex flex-col gap-4 overflow-y-auto pr-1 h-full">
-              <h2 className="text-2xl font-medium tracking-tight">{m.title}</h2>
-              {ex.altTaskDescription && (
-                <p className="italic text-[var(--muted)] leading-relaxed">
-                  {ex.altTaskDescription}
-                </p>
-              )}
-              {ex.altBody && (
-                <p className="leading-relaxed whitespace-pre-wrap">
-                  {ex.altBody}
-                </p>
-              )}
-              {revealed && ex.altRevealedTask && (
-                <div className="mt-2 border border-[var(--rule)] bg-[var(--rule-soft)] px-4 py-6 text-center">
-                  <p className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-2">
-                    Task
-                  </p>
-                  <p className="font-mono text-3xl tracking-[0.4em]">
-                    {ex.altRevealedTask}
-                  </p>
-                </div>
-              )}
-              {ex.walkthroughText && (
-                <div className="border border-dashed border-[var(--rule)] bg-[var(--panel)] p-3">
-                  <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)] mb-1">
-                    Researcher narrates
-                  </p>
-                  <p className="whitespace-pre-wrap leading-relaxed text-sm">
-                    {ex.walkthroughText}
-                  </p>
-                </div>
-              )}
-              <div className="mt-auto pt-4 flex gap-3">
-                {phase === 'example_body' && (
-                  <ContinueButton
-                    onClick={() => advanceTo('example_revealed')}
-                    label="Reveal example task"
-                  />
-                )}
-                {phase === 'example_revealed' && (
-                  <ContinueButton
-                    onClick={() => advanceTo('intro')}
-                    label="Continue to real warmup"
-                  />
-                )}
-              </div>
-            </section>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ============ Real phases ============
   if (phase === 'intro') {
     return (
       <Centered>
@@ -981,6 +1059,115 @@ function ThinkAloudWarmupRunner({
   );
 }
 
+// ===================== Think-aloud worked example =====================
+// A first-class display-only module. Same three phases as the warmup but
+// the researcher narrates (walkthroughText) and the answer is shown
+// pre-filled rather than typed.
+
+function ThinkAloudExampleRunner({
+  module: m,
+  save,
+  onComplete,
+  initialPhase,
+  controlled = false,
+  onAdvance,
+}: {
+  module: ThinkAloudExampleModule;
+  save: SaveAdapter;
+  onComplete: () => void;
+  initialPhase?: WarmupPhase;
+  controlled?: boolean;
+  onAdvance?: () => void;
+}) {
+  const copy = resolveWarmupCopy(m.copy);
+  const [phase, setPhase] = useState<WarmupPhase>(initialPhase ?? 'intro');
+
+  function advanceTo(next: WarmupPhase) {
+    save.recordEvent('step_advance', { from: phase, to: next });
+    if (controlled) onAdvance?.();
+    else setPhase(next);
+  }
+  function finish() {
+    save.recordEvent('step_advance', { from: phase, to: 'done' });
+    if (controlled) onAdvance?.();
+    else onComplete();
+  }
+
+  if (phase === 'intro') {
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <ExampleBanner />
+        <Centered>
+          <h2 className="text-2xl font-medium tracking-tight mb-4">
+            {copy.introTitle}
+          </h2>
+          <p className="text-[var(--muted)] leading-relaxed mb-8 whitespace-pre-wrap">
+            {m.taskDescription ||
+              'The researcher will demonstrate the think-aloud method.'}
+          </p>
+          <ContinueButton onClick={() => advanceTo('body')} />
+        </Centered>
+      </div>
+    );
+  }
+
+  const revealed = phase === 'revealed';
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <ExampleBanner />
+      <div className="flex-1 flex justify-center overflow-hidden min-h-0">
+        <div className="max-w-2xl w-full flex flex-col gap-4 overflow-hidden">
+          <section className="flex flex-col gap-4 overflow-y-auto pr-1 h-full">
+            <h2 className="text-2xl font-medium tracking-tight">{m.title}</h2>
+            {m.body && (
+              <p className="leading-relaxed whitespace-pre-wrap">{m.body}</p>
+            )}
+            {revealed && m.revealedTask && (
+              <div className="mt-2 border border-[var(--rule)] bg-[var(--rule-soft)] px-4 py-6 text-center">
+                <p className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-3">
+                  Task
+                </p>
+                <p className="font-mono text-3xl tracking-[0.4em] mb-4">
+                  {m.revealedTask}
+                </p>
+                {m.revealedAnswer && (
+                  <div className="max-w-xs mx-auto text-left">
+                    <span className="block text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-1">
+                      {copy.answerInputLabel}
+                    </span>
+                    <div className="w-full border border-[var(--rule)] bg-[var(--rule-soft)] px-3 py-2 font-mono tracking-[0.25em] text-center text-lg">
+                      {m.revealedAnswer}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {m.walkthroughText && (
+              <div className="border border-dashed border-[var(--rule)] bg-[var(--panel)] p-3">
+                <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)] mb-1">
+                  Researcher narrates
+                </p>
+                <p className="whitespace-pre-wrap leading-relaxed text-sm">
+                  {m.walkthroughText}
+                </p>
+              </div>
+            )}
+            <div className="mt-auto pt-4 flex gap-3">
+              {phase === 'body' && (
+                <ContinueButton
+                  onClick={() => advanceTo('revealed')}
+                  label={copy.revealButtonLabel}
+                />
+              )}
+              {phase === 'revealed' && <ContinueButton onClick={finish} />}
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // =============================== Task runner ==============================
 
 type TaskStep =
@@ -990,22 +1177,14 @@ type TaskStep =
   | { kind: 'scenario_read'; idx: number }
   | { kind: 'scenario_ponder'; idx: number }
   | { kind: 'scenario_revise'; idx: number }
-  // Example variants — only ever entered when module.example is present
-  | { kind: 'example_intro' }
-  | { kind: 'example_initial_spec' }
-  | { kind: 'example_scenario_read'; idx: number }
-  | { kind: 'example_scenario_ponder'; idx: number }
-  | { kind: 'example_scenario_revise'; idx: number };
+  | { kind: 'scenario_retro'; idx: number; qIdx: number };
 
 function stepLabel(s: TaskStep): string {
   if (s.kind === 'scenario_read') return `scenario_${s.idx}_read`;
   if (s.kind === 'scenario_ponder') return `scenario_${s.idx}_ponder`;
   if (s.kind === 'scenario_revise') return `scenario_${s.idx}_revise`;
-  if (s.kind === 'example_scenario_read') return `example_scenario_${s.idx}_read`;
-  if (s.kind === 'example_scenario_ponder')
-    return `example_scenario_${s.idx}_ponder`;
-  if (s.kind === 'example_scenario_revise')
-    return `example_scenario_${s.idx}_revise`;
+  if (s.kind === 'scenario_retro')
+    return `scenario_${s.idx}_retro_${s.qIdx}`;
   return s.kind;
 }
 
@@ -1036,13 +1215,15 @@ function TaskRunner({
   onAdvance?: () => void;
 }) {
   const t: TaskContent = m;
-  const example: TaskExample | undefined =
-    m.type === 'task_warmup' ? m.example : undefined;
+  const retro = t.perScenarioRetrospective ?? [];
 
   const [step, setStep] = useState<TaskStep>(initialStep ?? { kind: 'intro' });
   const [spec, setSpec] = useLocalString(`pf:${projectId}:${m.id}:spec`);
   const [entities, setEntities] = useLocalEntities(
     `pf:${projectId}:${m.id}:entities`,
+  );
+  const [retroAnswers, setRetroAnswer] = useLocalRecord(
+    `pf:${projectId}:${m.id}:scenario_retro`,
   );
 
   const [specSavedAt, markSpecSaved] = useSavedAt();
@@ -1080,35 +1261,32 @@ function TaskRunner({
     }
   }
 
+  // End the whole module: snapshot the final spec, write the cross-module
+  // pointer for the retrospective, then advance.
+  function finishModule(): void {
+    save.recordEvent('spec_snapshot', { at: 'final', value: spec });
+    writeLastSpecPointer({
+      projectId,
+      moduleId: m.id,
+      participantId,
+      spec,
+      entitiesJson,
+      skipPersist: isWarmup,
+    });
+    if (controlled) return onAdvance?.();
+    return onComplete();
+  }
+
+  // After a scenario's revise + (optional) retrospective questions, move to
+  // the next scenario or finish the module.
+  function afterScenario(idx: number): void {
+    const nextIdx = idx + 1;
+    if (nextIdx >= t.scenarios.length) return finishModule();
+    transitionTo({ kind: 'scenario_read', idx: nextIdx });
+  }
+
   function next(): void {
-    // Example phases
-    if (step.kind === 'example_intro') {
-      return transitionTo({ kind: 'example_initial_spec' });
-    }
-    if (step.kind === 'example_initial_spec') {
-      return transitionTo({ kind: 'example_scenario_read', idx: 0 });
-    }
-    if (step.kind === 'example_scenario_read') {
-      return transitionTo({ kind: 'example_scenario_ponder', idx: step.idx });
-    }
-    if (step.kind === 'example_scenario_ponder') {
-      return transitionTo({ kind: 'example_scenario_revise', idx: step.idx });
-    }
-    if (step.kind === 'example_scenario_revise') {
-      const nextIdx = step.idx + 1;
-      if (example && nextIdx >= example.scenarios.length) {
-        return transitionTo({ kind: 'context' });
-      }
-      return transitionTo({ kind: 'example_scenario_read', idx: nextIdx });
-    }
-    // Real phases
-    if (step.kind === 'intro') {
-      // If example present, jump into example intro first.
-      if (example) {
-        return transitionTo({ kind: 'example_intro' });
-      }
-      return transitionTo({ kind: 'context' });
-    }
+    if (step.kind === 'intro') return transitionTo({ kind: 'context' });
     if (step.kind === 'context')
       return transitionTo({ kind: 'initial_spec' });
     if (step.kind === 'initial_spec') {
@@ -1133,21 +1311,23 @@ function TaskRunner({
         at: `after_scenario_${step.idx}`,
         value: entitiesJson,
       });
-      const nextIdx = step.idx + 1;
-      if (nextIdx >= t.scenarios.length) {
-        save.recordEvent('spec_snapshot', { at: 'final', value: spec });
-        writeLastSpecPointer({
-          projectId,
-          moduleId: m.id,
-          participantId,
-          spec,
-          entitiesJson,
-          skipPersist: isWarmup,
-        });
-        if (controlled) return onAdvance?.();
-        return onComplete();
+      // Per-scenario retrospective questions (if any) come before the next
+      // scenario. Same question set repeats after every scenario.
+      if (retro.length > 0) {
+        return transitionTo({ kind: 'scenario_retro', idx: step.idx, qIdx: 0 });
       }
-      return transitionTo({ kind: 'scenario_read', idx: nextIdx });
+      return afterScenario(step.idx);
+    }
+    if (step.kind === 'scenario_retro') {
+      const nextQ = step.qIdx + 1;
+      if (nextQ < retro.length) {
+        return transitionTo({
+          kind: 'scenario_retro',
+          idx: step.idx,
+          qIdx: nextQ,
+        });
+      }
+      return afterScenario(step.idx);
     }
   }
 
@@ -1164,82 +1344,6 @@ function TaskRunner({
     );
   }
 
-  // ============ Example steps ============
-  if (step.kind === 'example_intro') {
-    if (!example) {
-      onComplete();
-      return null;
-    }
-    return <ExampleIntroStep onContinue={next} />;
-  }
-
-  if (step.kind === 'example_initial_spec') {
-    if (!example) {
-      onComplete();
-      return null;
-    }
-    return (
-      <ExampleInitialSpecStep
-        example={example}
-        onContinue={next}
-      />
-    );
-  }
-
-  if (
-    step.kind === 'example_scenario_read' ||
-    step.kind === 'example_scenario_revise'
-  ) {
-    if (!example) {
-      // Defensive — shouldn't enter without an example.
-      onComplete();
-      return null;
-    }
-    const scenario = example.scenarios[step.idx];
-    if (!scenario) {
-      // Index out of bounds — defer the jump until after render to keep
-      // setState off the render path. queueMicrotask is fine here.
-      queueMicrotask(() => transitionTo({ kind: 'context' }));
-      return null;
-    }
-    const prefilled = example.prefilled.perScenario[step.idx];
-    return step.kind === 'example_scenario_read' ? (
-      <ExampleScenarioReadStep
-        example={example}
-        scenario={scenario}
-        scenarioIdx={step.idx}
-        totalScenarios={example.scenarios.length}
-        moment={prefilled?.read}
-        onContinue={next}
-      />
-    ) : (
-      <ExampleScenarioReviseStep
-        example={example}
-        scenario={scenario}
-        scenarioIdx={step.idx}
-        totalScenarios={example.scenarios.length}
-        moment={prefilled?.revise}
-        isLast={step.idx === example.scenarios.length - 1}
-        onContinue={next}
-      />
-    );
-  }
-
-  if (step.kind === 'example_scenario_ponder') {
-    const perScenario = example?.prefilled.perScenario[step.idx];
-    return (
-      <PonderStep
-        scenarioIdx={step.idx}
-        totalScenarios={example?.scenarios.length ?? 0}
-        taskCopy={t.copy}
-        onContinue={next}
-        isExample
-        copyOverride={perScenario?.ponderCopy}
-      />
-    );
-  }
-
-  // ============ Real task steps ============
   if (step.kind === 'context') {
     return <ContextStep t={t} onContinue={next} />;
   }
@@ -1310,11 +1414,48 @@ function TaskRunner({
         setEntities={setEntities}
         specSavedAt={specSavedAt}
         entitiesSavedAt={entitiesSavedAt}
-        isLast={step.idx === t.scenarios.length - 1}
+        isLast={
+          step.idx === t.scenarios.length - 1 && retro.length === 0
+        }
         projectId={projectId}
         moduleId={m.id}
         save={save}
         onContinue={next}
+      />
+    );
+  }
+
+  if (step.kind === 'scenario_retro') {
+    const q = retro[step.qIdx];
+    if (!q) {
+      onComplete();
+      return null;
+    }
+    const answerKey = `${step.idx}:${step.qIdx}`;
+    const isLastQuestion = step.qIdx === retro.length - 1;
+    const isLastScenario = step.idx === t.scenarios.length - 1;
+    return (
+      <ScenarioRetroStep
+        question={q.text}
+        boxHeight={q.boxHeight}
+        scenarioTitle={scenario.title}
+        scenarioIdx={step.idx}
+        totalScenarios={t.scenarios.length}
+        questionIdx={step.qIdx}
+        totalQuestions={retro.length}
+        value={retroAnswers[answerKey] ?? ''}
+        onChange={(v) => {
+          setRetroAnswer(answerKey, v);
+          save.upsert(`scenario_retro:${answerKey}`, v);
+        }}
+        onContinue={next}
+        continueLabel={
+          isLastQuestion && isLastScenario
+            ? 'Finish task'
+            : isLastQuestion
+            ? 'Next scenario'
+            : 'Next question'
+        }
       />
     );
   }
@@ -1430,6 +1571,7 @@ function InitialSpecStep({
             entitiesSavedAt={entitiesSavedAt}
             onContinue={onContinue}
             continueLabel="Next"
+            placeholder={t.copy?.specPlaceholder}
           />
         </Panel>
       </PanelGroup>
@@ -1519,6 +1661,7 @@ function ScenarioReadStep({
           entitiesSavedAt={entitiesSavedAt}
           onContinue={onContinue}
           continueLabel="Continue"
+          placeholder={t.copy?.specPlaceholder}
         />
       </Panel>
     </PanelGroup>
@@ -1661,6 +1804,7 @@ function ScenarioReviseStep({
           entitiesSavedAt={entitiesSavedAt}
           onContinue={onContinue}
           continueLabel={isLast ? 'Finish task' : 'Next scenario'}
+          placeholder={t.copy?.specPlaceholder}
           leadIn={
             <div className="bg-[#fffbea] border border-[#d8c98a] px-3 py-2 text-sm italic text-[#7c5a2e]">
               {t.copy?.reviseCallout?.trim() || DEFAULT_TASK_COPY.reviseCallout}
@@ -1677,19 +1821,35 @@ function ScenarioReviseStep({
 // read-only, prefilled with the researcher-authored snapshot for that
 // moment. No persistence — example data is never sent to the server.
 
-function ExampleIntroStep({ onContinue }: { onContinue: () => void }) {
+function ExampleIntroStep({
+  title,
+  walkthroughText,
+  onContinue,
+}: {
+  title: string;
+  walkthroughText?: string;
+  onContinue: () => void;
+}) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <ExampleBanner />
       <Centered>
         <div className="space-y-6">
-          <h2 className="text-3xl font-medium tracking-tight">
-            Example — the researcher will demonstrate this task.
-          </h2>
+          <h2 className="text-3xl font-medium tracking-tight">{title}</h2>
           <p className="text-[var(--muted)] leading-relaxed">
-            Watch as the researcher walks through this practice task. You will
+            Watch as the researcher walks through this worked example. You will
             complete a similar one yourself afterward.
           </p>
+          {walkthroughText && (
+            <div className="border border-dashed border-[var(--rule)] bg-[var(--panel)] p-3 text-left">
+              <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)] mb-1">
+                Researcher narrates
+              </p>
+              <p className="whitespace-pre-wrap leading-relaxed text-sm">
+                {walkthroughText}
+              </p>
+            </div>
+          )}
           <ContinueButton onClick={onContinue} />
         </div>
       </Centered>
@@ -1867,6 +2027,171 @@ function ExampleScenarioReviseStep({
           />
         </Panel>
       </PanelGroup>
+    </div>
+  );
+}
+
+// ====================== Worked-example task runner ======================
+// Display-only mirror of TaskRunner driven by the standalone task_example
+// module. Reuses the Example*Step components; all screens are read-only and
+// show the researcher-authored prefilled spec/entities.
+
+function exStepLabel(s: ExStep): string {
+  if (s.kind === 'scenario_read') return `ex_scenario_${s.idx}_read`;
+  if (s.kind === 'scenario_ponder') return `ex_scenario_${s.idx}_ponder`;
+  if (s.kind === 'scenario_revise') return `ex_scenario_${s.idx}_revise`;
+  return `ex_${s.kind}`;
+}
+
+function TaskExampleRunner({
+  module: m,
+  save,
+  onComplete,
+  initialStep,
+  controlled = false,
+  onAdvance,
+}: {
+  module: TaskExampleModule;
+  save: SaveAdapter;
+  onComplete: () => void;
+  initialStep?: ExStep;
+  controlled?: boolean;
+  onAdvance?: () => void;
+}) {
+  const [step, setStep] = useState<ExStep>(initialStep ?? { kind: 'intro' });
+
+  function transitionTo(next: ExStep) {
+    save.recordEvent('step_advance', {
+      from: exStepLabel(step),
+      to: exStepLabel(next),
+    });
+    if (controlled) onAdvance?.();
+    else setStep(next);
+  }
+  function finish() {
+    if (controlled) onAdvance?.();
+    else onComplete();
+  }
+
+  function next(): void {
+    if (step.kind === 'intro') return transitionTo({ kind: 'initial_spec' });
+    if (step.kind === 'initial_spec')
+      return transitionTo({ kind: 'scenario_read', idx: 0 });
+    if (step.kind === 'scenario_read')
+      return transitionTo({ kind: 'scenario_ponder', idx: step.idx });
+    if (step.kind === 'scenario_ponder')
+      return transitionTo({ kind: 'scenario_revise', idx: step.idx });
+    if (step.kind === 'scenario_revise') {
+      const nextIdx = step.idx + 1;
+      if (nextIdx >= m.scenarios.length) return finish();
+      return transitionTo({ kind: 'scenario_read', idx: nextIdx });
+    }
+  }
+
+  if (step.kind === 'intro')
+    return (
+      <ExampleIntroStep
+        title={m.title}
+        walkthroughText={m.walkthroughText}
+        onContinue={next}
+      />
+    );
+  if (step.kind === 'initial_spec')
+    return <ExampleInitialSpecStep example={m} onContinue={next} />;
+
+  const scenario = m.scenarios[step.idx];
+  if (!scenario) {
+    onComplete();
+    return null;
+  }
+  const prefilled = m.prefilled.perScenario[step.idx];
+
+  if (step.kind === 'scenario_read')
+    return (
+      <ExampleScenarioReadStep
+        example={m}
+        scenario={scenario}
+        scenarioIdx={step.idx}
+        totalScenarios={m.scenarios.length}
+        moment={prefilled?.read}
+        onContinue={next}
+      />
+    );
+  if (step.kind === 'scenario_ponder')
+    return (
+      <PonderStep
+        scenarioIdx={step.idx}
+        totalScenarios={m.scenarios.length}
+        taskCopy={m.copy}
+        onContinue={next}
+        isExample
+        copyOverride={prefilled?.ponderCopy}
+      />
+    );
+  if (step.kind === 'scenario_revise')
+    return (
+      <ExampleScenarioReviseStep
+        example={m}
+        scenario={scenario}
+        scenarioIdx={step.idx}
+        totalScenarios={m.scenarios.length}
+        moment={prefilled?.revise}
+        isLast={step.idx === m.scenarios.length - 1}
+        onContinue={next}
+      />
+    );
+  return null;
+}
+
+// =================== Task: per-scenario retrospective ===================
+// Shown after each scenario's revise when the task defines
+// perScenarioRetrospective questions. The same question set repeats for
+// every scenario; answers persist locally keyed by scenario+question.
+
+function ScenarioRetroStep({
+  question,
+  boxHeight,
+  scenarioTitle,
+  scenarioIdx,
+  totalScenarios,
+  questionIdx,
+  totalQuestions,
+  value,
+  onChange,
+  onContinue,
+  continueLabel,
+}: {
+  question: string;
+  boxHeight: number;
+  scenarioTitle: string;
+  scenarioIdx: number;
+  totalScenarios: number;
+  questionIdx: number;
+  totalQuestions: number;
+  value: string;
+  onChange: (v: string) => void;
+  onContinue: () => void;
+  continueLabel: string;
+}) {
+  return (
+    <div className="flex-1 flex justify-center overflow-hidden min-h-0">
+      <section className="max-w-2xl w-full flex flex-col gap-4 overflow-y-auto pr-1">
+        <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
+          {scenarioTitle} · Scenario {scenarioIdx + 1} of {totalScenarios} ·
+          Retrospective Q{questionIdx + 1} of {totalQuestions}
+        </p>
+        <p className="text-lg leading-relaxed whitespace-pre-wrap">{question}</p>
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full border border-[var(--rule)] p-3 bg-[var(--panel)] focus:outline-none focus:border-[var(--accent)] leading-relaxed resize-y"
+          style={{ minHeight: `${Math.max(boxHeight, 1) * 80}px` }}
+          placeholder="Reflect on your reasoning…"
+        />
+        <div className="pt-2">
+          <ContinueButton onClick={onContinue} label={continueLabel} />
+        </div>
+      </section>
     </div>
   );
 }
@@ -2094,6 +2419,7 @@ function SpecColumn({
   readOnly = false,
   leadIn,
   headerNote,
+  placeholder,
 }: {
   spec: string;
   setSpec: (v: string) => void;
@@ -2106,8 +2432,12 @@ function SpecColumn({
   readOnly?: boolean;
   leadIn?: React.ReactNode;
   headerNote?: string;
+  // Grey italic caption above the spec textarea. `undefined` → default
+  // SPEC_PLACEHOLDER; empty string → caption hidden (researcher cleared it).
+  placeholder?: string;
 }) {
   const padBg = readOnly ? 'bg-[var(--rule-soft)]' : 'bg-white';
+  const caption = placeholder === undefined ? SPEC_PLACEHOLDER : placeholder;
   return (
     <section className="h-full flex flex-col gap-2 overflow-y-auto min-h-0 pl-3">
       {leadIn}
@@ -2133,9 +2463,11 @@ function SpecColumn({
         >
           ================================================
         </p>
-        <p className="text-xs italic text-[var(--muted)] leading-relaxed">
-          {SPEC_PLACEHOLDER}
-        </p>
+        {caption && (
+          <p className="text-xs italic text-[var(--muted)] leading-relaxed">
+            {caption}
+          </p>
+        )}
         <textarea
           value={spec}
           onChange={(e) => !readOnly && setSpec(e.target.value)}

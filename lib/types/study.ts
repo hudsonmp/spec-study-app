@@ -105,13 +105,15 @@ export type RetrospectiveItem = {
 
 export type ModuleType =
   | 'think_aloud_warmup'
+  | 'think_aloud_example'
   | 'task_warmup'
+  | 'task_example'
   | 'task'
   | 'retrospective_report';
 
-// Researcher-authored walkthrough variant for the think-aloud warmup. When
-// present, the participant sees the example (read-only) BEFORE the real
-// warmup runs. Banner shown across every example screen.
+// LEGACY shape — was an optional `example` sub-field on warmup/task modules.
+// Kept only so migrateContent can read old authored_data and split it into a
+// standalone `think_aloud_example` module. Not used by any current module.
 export type ThinkAloudExample = {
   altTaskDescription: string;
   altBody: string;
@@ -152,7 +154,22 @@ export type ThinkAloudWarmupModule = {
   revealedAnswer: string;
   includeScratchPaper: boolean; // ignored — scratchpad removed; kept for back-compat
   mandatory: boolean;
-  example?: ThinkAloudExample;
+  copy?: ThinkAloudWarmupCopy;
+};
+
+// Worked example of thinking aloud — a FIRST-CLASS module (not a sub-field).
+// Structurally identical to a warmup but rendered display-only: the researcher
+// narrates while the participant watches. The answer is shown pre-filled
+// rather than typed. `walkthroughText` is the researcher's narration.
+export type ThinkAloudExampleModule = {
+  id: string;
+  type: 'think_aloud_example';
+  title: string;
+  taskDescription: string;
+  body: string;
+  revealedTask: string;
+  revealedAnswer: string;
+  walkthroughText: string;
   copy?: ThinkAloudWarmupCopy;
 };
 
@@ -165,6 +182,9 @@ export type TaskCopy = {
   reviseCallout?: string;
   warmupAnnotation?: string;
   realAnnotation?: string;
+  // The grey italic caption above the spec textarea. Empty string (set via the
+  // editor's clear button) hides the caption entirely.
+  specPlaceholder?: string;
 };
 
 export const DEFAULT_TASK_COPY: Required<TaskCopy> = {
@@ -177,11 +197,15 @@ export const DEFAULT_TASK_COPY: Required<TaskCopy> = {
     'This is a warmup task. Your responses are not saved or analyzed; they are practice only.',
   realAnnotation:
     'Your responses for this task will be saved and included in the study analysis.',
+  specPlaceholder:
+    'Specify the rules, types of information, behavior, features, and implementation of the system however feels natural to you. This may include inputs/outputs, data types, pseudocode, prompts to an LLM coding agent, or anything else that feels natural.',
 };
 
-// Shared task-shaped content. Used by both Task and TaskWarmup (warmup is the
-// same UI, just rendered as "Warmup" and excluded from analysis).
-// Retrospective is NOT here — it lives in its own module type now.
+// Shared task-shaped content. Used by Task, TaskWarmup, and TaskExample.
+// `perScenarioRetrospective` is an optional set of reflection questions shown
+// AFTER each scenario's revise step (the same questions repeat for every
+// scenario). Distinct from the standalone retrospective_report module which
+// runs once at the end.
 export type TaskContent = {
   title: string;
   studyContext: string;
@@ -189,6 +213,7 @@ export type TaskContent = {
   cityMap?: CityMap;
   initialSpec: SpecSubsection[];
   scenarios: Scenario[]; // 1-3 enforced by the editor
+  perScenarioRetrospective?: RetrospectiveItem[];
   copy?: TaskCopy;
 };
 
@@ -232,8 +257,20 @@ export type TaskExamplePrefilled = {
   }[];
 };
 
+// TaskContent + researcher-authored prefilled snapshots. Used as the body of
+// a TaskExampleModule (a first-class module), and historically as the legacy
+// `example` sub-field (migrated away by migrateContent).
 export type TaskExample = TaskContent & {
   prefilled: TaskExamplePrefilled;
+};
+
+// Worked example task — a FIRST-CLASS module. Renders the task screens
+// display-only with prefilled spec/entities at each moment; the researcher
+// narrates via `walkthroughText`.
+export type TaskExampleModule = TaskExample & {
+  id: string;
+  type: 'task_example';
+  walkthroughText?: string;
 };
 
 export type RetrospectiveReportModule = {
@@ -246,7 +283,6 @@ export type RetrospectiveReportModule = {
 export type TaskWarmupModule = {
   id: string;
   type: 'task_warmup';
-  example?: TaskExample;
 } & TaskContent;
 
 export type TaskModule = {
@@ -256,7 +292,9 @@ export type TaskModule = {
 
 export type Module =
   | ThinkAloudWarmupModule
+  | ThinkAloudExampleModule
   | TaskWarmupModule
+  | TaskExampleModule
   | TaskModule
   | RetrospectiveReportModule;
 
@@ -329,11 +367,15 @@ function newTaskContent(): TaskContent {
   };
 }
 
-export function newThinkAloudExample(): ThinkAloudExample {
+export function newThinkAloudExampleModule(): ThinkAloudExampleModule {
   return {
-    altTaskDescription: '',
-    altBody: '',
-    altRevealedTask: '',
+    id: uid(),
+    type: 'think_aloud_example',
+    title: 'Worked example',
+    taskDescription: '',
+    body: '',
+    revealedTask: 'DUYTS',
+    revealedAnswer: 'STUDY',
     walkthroughText: '',
   };
 }
@@ -376,6 +418,16 @@ export function newTaskExample(scenariosLen = 1): TaskExample {
   };
 }
 
+export function newTaskExampleModule(): TaskExampleModule {
+  return {
+    ...newTaskExample(1),
+    id: uid(),
+    type: 'task_example',
+    title: 'Worked example task',
+    walkthroughText: '',
+  };
+}
+
 export function newRetrospectiveReport(): RetrospectiveReportModule {
   return {
     id: uid(),
@@ -403,8 +455,12 @@ export function newModuleOfType(type: ModuleType): Module {
   switch (type) {
     case 'think_aloud_warmup':
       return newThinkAloudWarmup();
+    case 'think_aloud_example':
+      return newThinkAloudExampleModule();
     case 'task_warmup':
       return newTaskWarmup();
+    case 'task_example':
+      return newTaskExampleModule();
     case 'task':
       return newTask();
     case 'retrospective_report':
@@ -412,9 +468,13 @@ export function newModuleOfType(type: ModuleType): Module {
   }
 }
 
+// Order here drives the "Add module" dropdown order. Worked examples sit
+// next to their non-example counterparts.
 export const MODULE_TYPE_LABEL: Record<ModuleType, string> = {
   think_aloud_warmup: 'Think-aloud warmup',
-  task_warmup: 'Task warmup',
+  think_aloud_example: 'Think-aloud worked example',
+  task_example: 'Worked example task',
+  task_warmup: 'Warmup task',
   task: 'Task',
   retrospective_report: 'Retrospective report',
 };
@@ -422,7 +482,12 @@ export const MODULE_TYPE_LABEL: Record<ModuleType, string> = {
 // Whether the participant's responses on this module are saved to the
 // long-term DB (study_responses). Task warmups are practice-only and never
 // persisted; everything else is. UI-only for V1 (the actual /study route
-// will enforce on submit in V2).
+// will enforce on submit in V2). Worked-example modules are display-only
+// walkthroughs and never collect participant data, so they don't persist.
 export function isPersistedToDb(type: ModuleType): boolean {
-  return type !== 'task_warmup';
+  return (
+    type !== 'task_warmup' &&
+    type !== 'task_example' &&
+    type !== 'think_aloud_example'
+  );
 }

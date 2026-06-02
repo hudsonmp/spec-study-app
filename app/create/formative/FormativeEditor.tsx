@@ -16,10 +16,12 @@ import type {
   TaskCopy,
   ThinkAloudWarmupModule,
   ThinkAloudWarmupCopy,
-  ThinkAloudExample,
+  ThinkAloudExampleModule,
   TaskExample,
+  TaskExampleModule,
   TaskExamplePrefilled,
   RetrospectiveReportModule,
+  RetrospectiveItem,
   ModuleType,
   Clause,
   ClauseMarker,
@@ -36,8 +38,6 @@ import type {
 import {
   MODULE_TYPE_LABEL,
   newModuleOfType,
-  newThinkAloudExample,
-  newTaskExample,
   newPrefilledPerScenario,
   uid,
   VEHICLE_COLOR_TO_NUMBER,
@@ -444,8 +444,14 @@ function ModuleCard({
       {m.type === 'think_aloud_warmup' && (
         <ThinkAloudWarmupEditor module={m} patch={patch} />
       )}
+      {m.type === 'think_aloud_example' && (
+        <ThinkAloudExampleEditor module={m} patch={patch} />
+      )}
       {(m.type === 'task' || m.type === 'task_warmup') && (
         <TaskEditor module={m} patch={patch} />
+      )}
+      {m.type === 'task_example' && (
+        <TaskExampleEditor module={m} patch={patch} />
       )}
       {m.type === 'retrospective_report' && (
         <RetrospectiveReportEditor module={m} patch={patch} />
@@ -533,26 +539,11 @@ function ThinkAloudWarmupEditor({
         </label>
       </div>
       <WarmupCopyEditor copy={m.copy} setCopy={(c) => p((w) => (w.copy = c))} />
-      <details className="mt-4 border border-dashed border-[var(--rule)] p-3">
-        <summary className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] cursor-pointer">
-          Example demo {m.example ? '(authored)' : '(none)'}
-        </summary>
-        {m.example ? (
-          <ThinkAloudExampleEditor
-            example={m.example}
-            onChange={(next) => p((w) => (w.example = next))}
-            onClear={() => p((w) => (w.example = undefined))}
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={() => p((w) => (w.example = newThinkAloudExample()))}
-            className="text-xs italic text-[var(--muted)] hover:text-[var(--foreground)] border border-dashed border-[var(--rule)] px-3 py-1 mt-2"
-          >
-            + Add example demo
-          </button>
-        )}
-      </details>
+      <p className="text-[11px] italic text-[var(--muted)]">
+        Want a worked example before this warmup? Add a{' '}
+        <strong className="not-italic">Think-aloud worked example</strong>{' '}
+        module from the picker below and drag it above this one.
+      </p>
     </div>
   );
 }
@@ -675,9 +666,9 @@ function TaskCopyEditor({
 }) {
   function set<K extends keyof TaskCopy>(key: K, value: TaskCopy[K]) {
     const next: TaskCopy = { ...(copy ?? {}), [key]: value };
-    const hasAny = Object.values(next).some(
-      (v) => v !== undefined && v !== '',
-    );
+    // Keep the wrapper alive when ANY key is present (incl. an explicit ''
+    // for specPlaceholder, which means "hide the caption" and must persist).
+    const hasAny = Object.values(next).some((v) => v !== undefined);
     setCopy(hasAny ? next : undefined);
   }
   return (
@@ -722,68 +713,155 @@ function TaskCopyEditor({
           onChange={(v) => set('realAnnotation', v)}
           multiline
         />
+        <SpecPlaceholderField
+          value={copy?.specPlaceholder}
+          onChange={(v) => set('specPlaceholder', v)}
+        />
       </div>
     </details>
   );
 }
 
-function ThinkAloudExampleEditor({
-  example,
+// The grey italic caption above the spec textarea has three states:
+//   undefined → show the default caption
+//   '' (Hidden) → no caption at all
+//   custom string → show that text
+// Distinct control (not CopyOverrideField) because '' is meaningful here.
+function SpecPlaceholderField({
+  value,
   onChange,
-  onClear,
 }: {
-  example: ThinkAloudExample;
-  onChange: (next: ThinkAloudExample) => void;
-  onClear: () => void;
+  value: string | undefined;
+  onChange: (v: string | undefined) => void;
 }) {
-  function set<K extends keyof ThinkAloudExample>(
-    key: K,
-    value: ThinkAloudExample[K],
-  ) {
-    onChange({ ...example, [key]: value });
-  }
+  const mode = value === undefined ? 'default' : value === '' ? 'hidden' : 'custom';
   return (
-    <div className="mt-3 space-y-3">
-      <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
-        Shown to the participant BEFORE the real warmup, with the banner
-        &ldquo;Example — the researcher will walk through this.&rdquo; Screens
-        are read-only for the participant.
-      </p>
-      <FieldLabel label="Alt task description">
+    <div>
+      <div className="flex justify-between items-center mb-1">
+        <div className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+          Spec instructions caption
+        </div>
+        <select
+          value={mode}
+          onChange={(e) => {
+            const next = e.target.value;
+            if (next === 'default') onChange(undefined);
+            else if (next === 'hidden') onChange('');
+            else onChange(DEFAULT_TASK_COPY.specPlaceholder);
+          }}
+          className="text-[11px] border border-[var(--rule)] bg-white px-1 py-0.5"
+        >
+          <option value="default">Show default</option>
+          <option value="custom">Custom text</option>
+          <option value="hidden">Hide entirely</option>
+        </select>
+      </div>
+      {mode === 'custom' && (
         <textarea
           className={inputCls + ' min-h-[60px]'}
-          value={example.altTaskDescription}
-          onChange={(e) => set('altTaskDescription', e.target.value)}
+          value={value ?? ''}
+          onChange={(e) => onChange(e.target.value)}
         />
-      </FieldLabel>
-      <FieldLabel label="Alt warmup body">
-        <textarea
-          className={inputCls + ' min-h-[100px]'}
-          value={example.altBody}
-          onChange={(e) => set('altBody', e.target.value)}
-        />
-      </FieldLabel>
-      <FieldLabel label="Alt revealed task">
+      )}
+      {mode === 'default' && (
+        <p className="text-xs italic text-[var(--muted)] leading-relaxed">
+          {DEFAULT_TASK_COPY.specPlaceholder}
+        </p>
+      )}
+      {mode === 'hidden' && (
+        <p className="text-xs italic text-[var(--muted)]">
+          No caption shown above the spec box.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Editor for the standalone think-aloud worked-example module. Same fields
+// as the warmup, plus researcher narration; rendered read-only to the
+// participant with the "Example" banner.
+function ThinkAloudExampleEditor({
+  module: m,
+  patch,
+}: {
+  module: ThinkAloudExampleModule;
+  patch: (fn: (m: Module) => void) => void;
+}) {
+  function p(fn: (w: ThinkAloudExampleModule) => void) {
+    patch((mod) => {
+      if (mod.type === 'think_aloud_example') fn(mod);
+    });
+  }
+  return (
+    <div className="space-y-3">
+      <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
+        Display-only worked example. Shown with the &ldquo;Example — the
+        researcher will walk through this&rdquo; banner; the answer is shown
+        pre-filled rather than typed.
+      </p>
+      <FieldLabel label="Title">
         <input
-          className={inputCls + ' font-mono tracking-widest'}
-          value={example.altRevealedTask}
-          onChange={(e) => set('altRevealedTask', e.target.value)}
+          type="text"
+          className={inputCls}
+          value={m.title}
+          onChange={(e) => p((w) => (w.title = e.target.value))}
         />
       </FieldLabel>
-      <FieldLabel label="Walkthrough narration (what the researcher says)">
+      <FieldLabel
+        label="Intro / task description"
+        onClear={() => p((w) => (w.taskDescription = ''))}
+        clearDisabled={!m.taskDescription}
+      >
+        <textarea
+          className={inputCls + ' min-h-[60px]'}
+          value={m.taskDescription}
+          onChange={(e) => p((w) => (w.taskDescription = e.target.value))}
+          placeholder="Empty — participant sees nothing here"
+        />
+      </FieldLabel>
+      <FieldLabel
+        label="Body"
+        onClear={() => p((w) => (w.body = ''))}
+        clearDisabled={!m.body}
+      >
         <textarea
           className={inputCls + ' min-h-[100px]'}
-          value={example.walkthroughText}
-          onChange={(e) => set('walkthroughText', e.target.value)}
+          value={m.body}
+          onChange={(e) => p((w) => (w.body = e.target.value))}
+          placeholder="Empty — participant sees nothing here"
         />
       </FieldLabel>
-      <button
-        type="button"
-        onClick={onClear}
-        className="text-xs text-[var(--danger)] hover:underline"
+      <div className="grid grid-cols-2 gap-3">
+        <FieldLabel label="Scrambled word (shown)">
+          <input
+            className={inputCls + ' font-mono tracking-widest'}
+            value={m.revealedTask}
+            onChange={(e) => p((w) => (w.revealedTask = e.target.value))}
+            placeholder="e.g. DUYTS"
+          />
+        </FieldLabel>
+        <FieldLabel label="Answer (shown pre-filled)">
+          <input
+            className={inputCls + ' font-mono tracking-widest'}
+            value={m.revealedAnswer}
+            onChange={(e) => p((w) => (w.revealedAnswer = e.target.value))}
+            placeholder="e.g. STUDY"
+          />
+        </FieldLabel>
+      </div>
+      <FieldLabel
+        label="Walkthrough narration (what the researcher says)"
+        onClear={() => p((w) => (w.walkthroughText = ''))}
+        clearDisabled={!m.walkthroughText}
       >
-        Remove example demo
-      </button>
+        <textarea
+          className={inputCls + ' min-h-[100px]'}
+          value={m.walkthroughText}
+          onChange={(e) => p((w) => (w.walkthroughText = e.target.value))}
+          placeholder="Empty — no narration box shown"
+        />
+      </FieldLabel>
+      <WarmupCopyEditor copy={m.copy} setCopy={(c) => p((w) => (w.copy = c))} />
     </div>
   );
 }
@@ -859,41 +937,15 @@ function TaskEditor({
 
       <TaskCopyEditor copy={m.copy} setCopy={(c) => p((t) => (t.copy = c))} />
 
-      {m.type === 'task_warmup' && (
-        <details className="border border-dashed border-[var(--rule)] p-3">
-          <summary className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] cursor-pointer">
-            Example demo {m.example ? '(authored)' : '(none)'}
-          </summary>
-          {m.example ? (
-            <TaskExampleEditor
-              example={m.example}
-              onChange={(next) =>
-                patch((mod) => {
-                  if (mod.type === 'task_warmup') mod.example = next;
-                })
-              }
-              onClear={() =>
-                patch((mod) => {
-                  if (mod.type === 'task_warmup') mod.example = undefined;
-                })
-              }
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={() =>
-                patch((mod) => {
-                  if (mod.type === 'task_warmup')
-                    mod.example = newTaskExample(m.scenarios.length || 1);
-                })
-              }
-              className="text-xs italic text-[var(--muted)] hover:text-[var(--foreground)] border border-dashed border-[var(--rule)] px-3 py-1 mt-2"
-            >
-              + Add example demo
-            </button>
-          )}
-        </details>
-      )}
+      <PerScenarioRetrospectiveEditor
+        questions={m.perScenarioRetrospective ?? []}
+        setQuestions={(next) =>
+          p((t) => {
+            if (next.length === 0) delete t.perScenarioRetrospective;
+            else t.perScenarioRetrospective = next;
+          })
+        }
+      />
 
       <Section
         title={`Scenarios (${m.scenarios.length}/3)`}
@@ -1080,6 +1132,87 @@ function InitialSpecPromptsEditor({
   );
 }
 
+// ============== Per-scenario retrospective questions editor ==============
+// These questions repeat after EACH scenario's revise step within a task.
+// Same question set for every scenario; empty list = no retrospective screens.
+
+function PerScenarioRetrospectiveEditor({
+  questions,
+  setQuestions,
+}: {
+  questions: RetrospectiveItem[];
+  setQuestions: (next: RetrospectiveItem[]) => void;
+}) {
+  return (
+    <details className="border border-dashed border-[var(--rule)] p-3">
+      <summary className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] cursor-pointer">
+        Per-scenario retrospective ({questions.length}{' '}
+        {questions.length === 1 ? 'question' : 'questions'})
+      </summary>
+      <p className="text-xs italic text-[var(--muted)] mt-2 mb-3">
+        Shown after every scenario&rsquo;s revise step. The same questions
+        repeat for each scenario. Leave empty for none.
+      </p>
+      <Section
+        title="Questions"
+        onAdd={() =>
+          setQuestions([
+            ...questions,
+            { id: uid(), text: 'New question', boxHeight: 1.1 },
+          ])
+        }
+      >
+        {questions.map((q, i) => (
+          <div
+            key={q.id}
+            className="grid grid-cols-[1fr_auto] gap-2 mb-2 items-start"
+          >
+            <textarea
+              className={inputCls + ' min-h-[44px]'}
+              value={q.text}
+              onChange={(e) => {
+                const next = questions.slice();
+                next[i] = { ...next[i], text: e.target.value };
+                setQuestions(next);
+              }}
+            />
+            <div className="flex">
+              <button
+                className={iconBtn}
+                disabled={i === 0}
+                onClick={() => {
+                  const next = questions.slice();
+                  if (moveInArray(next, i, -1)) setQuestions(next);
+                }}
+              >
+                ↑
+              </button>
+              <button
+                className={iconBtn}
+                disabled={i === questions.length - 1}
+                onClick={() => {
+                  const next = questions.slice();
+                  if (moveInArray(next, i, 1)) setQuestions(next);
+                }}
+              >
+                ↓
+              </button>
+              <button
+                className={iconBtn}
+                onClick={() =>
+                  setQuestions(questions.filter((_, idx) => idx !== i))
+                }
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        ))}
+      </Section>
+    </details>
+  );
+}
+
 // ===================== Retrospective report editor =====================
 
 function RetrospectiveReportEditor({
@@ -1183,16 +1316,22 @@ function RetrospectiveReportEditor({
 // against scenarios mirror onto the prefilled array.
 
 function TaskExampleEditor({
-  example,
-  onChange,
-  onClear,
+  module: m,
+  patch,
 }: {
-  example: TaskExample;
-  onChange: (next: TaskExample) => void;
-  onClear: () => void;
+  module: TaskExampleModule;
+  patch: (fn: (mod: Module) => void) => void;
 }) {
-  // Direct field mutators — kept inline because the per-field edits are
-  // small and benefit from the simplest possible call sites.
+  // The module is a superset of TaskExample; treat it as one for the shared
+  // field editors, and write changes back via Object.assign (preserving
+  // id/type/walkthroughText, which `next` carries through unchanged).
+  const example: TaskExample = m;
+  function onChange(next: TaskExample) {
+    patch((mod) => {
+      if (mod.type !== 'task_example') return;
+      Object.assign(mod, next);
+    });
+  }
   function set<K extends keyof TaskExample>(key: K, value: TaskExample[K]) {
     onChange({ ...example, [key]: value });
   }
@@ -1227,21 +1366,12 @@ function TaskExampleEditor({
   const landmarks = cityMapLandmarkOptions(example.cityMap);
 
   return (
-    <div className="mt-3 space-y-4">
-      <div className="flex justify-between items-baseline gap-3">
-        <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2 flex-1">
-          Example screens are display-only; participants watch the researcher
-          walk through them. Authored entities and spec text appear read-only
-          on the corresponding participant screens.
-        </p>
-        <button
-          type="button"
-          onClick={onClear}
-          className="text-xs text-[var(--danger)] hover:underline whitespace-nowrap self-start mt-2"
-        >
-          Remove example
-        </button>
-      </div>
+    <div className="space-y-4">
+      <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
+        Worked-example task — display-only. Participants watch the researcher
+        walk through it; authored entities and spec text appear read-only on
+        each screen. Place it before the matching warmup task.
+      </p>
 
       <FieldLabel label="Title">
         <input
@@ -1252,7 +1382,33 @@ function TaskExampleEditor({
         />
       </FieldLabel>
 
-      <FieldLabel label="Study context (researcher-only — hidden from participant on example screens)">
+      <FieldLabel
+        label="Researcher narration (shown on the intro screen)"
+        onClear={() =>
+          patch((mod) => {
+            if (mod.type === 'task_example') mod.walkthroughText = '';
+          })
+        }
+        clearDisabled={!m.walkthroughText}
+      >
+        <textarea
+          className={inputCls + ' min-h-[80px]'}
+          value={m.walkthroughText ?? ''}
+          onChange={(e) =>
+            patch((mod) => {
+              if (mod.type === 'task_example')
+                mod.walkthroughText = e.target.value;
+            })
+          }
+          placeholder="Empty — no narration box on the intro screen"
+        />
+      </FieldLabel>
+
+      <FieldLabel
+        label="Study context (researcher-only — hidden from participant)"
+        onClear={() => set('studyContext', '')}
+        clearDisabled={!example.studyContext}
+      >
         <textarea
           className={inputCls + ' min-h-[60px]'}
           value={example.studyContext}

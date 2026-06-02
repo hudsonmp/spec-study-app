@@ -4,28 +4,29 @@ export type ScreenKind =
   | 'pre_system'
   | 'login'
   | 'questionnaire'
-  // Think-aloud warmup, example variant (only emitted when module.example)
+  // Think-aloud worked-example module (display-only)
   | 'warmup_example_intro'
   | 'warmup_example_body'
   | 'warmup_example_revealed'
-  // Think-aloud warmup, real
+  // Think-aloud warmup (real)
   | 'warmup_intro'
   | 'warmup_body'
   | 'warmup_revealed'
-  // Task warmup example variant (only emitted when task_warmup.example)
+  // Worked-example task module (display-only, prefilled)
   | 'task_example_intro'
   | 'task_example_initial_spec'
   | 'task_example_scenario_read'
   | 'task_example_scenario_ponder'
   | 'task_example_scenario_revise'
-  // Task / task_warmup, real
+  // Task / task_warmup (real)
   | 'task_intro'
   | 'task_context'
   | 'task_initial_spec'
   | 'task_scenario_read'
   | 'task_scenario_ponder'
   | 'task_scenario_revise'
-  // Retrospective: one screen per question now
+  | 'task_scenario_retro' // per-scenario retrospective question (repeats each scenario)
+  // Standalone retrospective report: one screen per question
   | 'retrospective_question';
 
 // Globals: not tied to any module. moduleId is a sentinel '_global', moduleType
@@ -40,7 +41,8 @@ export type Screen = {
   moduleNumber: number; // 0 for globals
   moduleLabel: string;
   kind: ScreenKind;
-  idx?: number;
+  idx?: number; // scenario index (or question index for retrospective_question)
+  subIdx?: number; // per-scenario retrospective question index
   label: string;
   summary: string;
 };
@@ -68,6 +70,9 @@ function snippet(s: string, max = 80): string {
   return t.length > max ? t.slice(0, max - 1) + '…' : t;
 }
 
+// Short, human kind labels. The participant-facing screen always shows the
+// module's own title; these are just the within-module step names used in the
+// preview/jump dropdown and the script rail.
 export function labelFor(kind: ScreenKind): string {
   switch (kind) {
     case 'pre_system':
@@ -77,29 +82,29 @@ export function labelFor(kind: ScreenKind): string {
     case 'questionnaire':
       return 'Questionnaire';
     case 'warmup_example_intro':
-      return 'Example · Think-aloud intro';
+      return 'Intro';
     case 'warmup_example_body':
-      return 'Example · Warmup body';
+      return 'Body';
     case 'warmup_example_revealed':
-      return 'Example · Reveal';
+      return 'Reveal';
     case 'warmup_intro':
-      return 'Think-aloud intro';
+      return 'Intro';
     case 'warmup_body':
-      return 'Warmup body';
+      return 'Body';
     case 'warmup_revealed':
       return 'Reveal';
     case 'task_example_intro':
-      return 'Example · Intro';
+      return 'Intro';
     case 'task_example_initial_spec':
-      return 'Example · Initial spec';
+      return 'Initial spec';
     case 'task_example_scenario_read':
-      return 'Example · Scenario read';
+      return 'Scenario read';
     case 'task_example_scenario_ponder':
-      return 'Example · Scenario ponder';
+      return 'Scenario ponder';
     case 'task_example_scenario_revise':
-      return 'Example · Scenario revise';
+      return 'Scenario revise';
     case 'task_intro':
-      return 'Task intro';
+      return 'Intro';
     case 'task_context':
       return 'Context';
     case 'task_initial_spec':
@@ -110,6 +115,8 @@ export function labelFor(kind: ScreenKind): string {
       return 'Scenario ponder';
     case 'task_scenario_revise':
       return 'Scenario revise';
+    case 'task_scenario_retro':
+      return 'Scenario retrospective';
     case 'retrospective_question':
       return 'Retrospective';
   }
@@ -139,171 +146,124 @@ export function enumerateScreens(content: ProjectContent): Screen[] {
 
   content.modules.forEach((m, mi) => {
     const moduleNumber = mi + 1;
-    if (m.type === 'think_aloud_warmup') {
-      const moduleLabel = m.title || 'Think-aloud warmup';
-      // Optional example variant first.
-      if (m.example) {
-        const ex = m.example;
-        out.push({
-          key: `${m.id}:warmup_example_intro`,
-          moduleId: m.id,
-          moduleType: m.type,
-          moduleNumber,
-          moduleLabel,
-          kind: 'warmup_example_intro',
-          label: `Module ${moduleNumber} · Example · Think-aloud intro`,
-          summary: 'Example demo — researcher walks through this',
-        });
-        out.push({
-          key: `${m.id}:warmup_example_body`,
-          moduleId: m.id,
-          moduleType: m.type,
-          moduleNumber,
-          moduleLabel,
-          kind: 'warmup_example_body',
-          label: `Module ${moduleNumber} · Example · Warmup body`,
-          summary: snippet(ex.altBody || ex.altTaskDescription || ''),
-        });
-        out.push({
-          key: `${m.id}:warmup_example_revealed`,
-          moduleId: m.id,
-          moduleType: m.type,
-          moduleNumber,
-          moduleLabel,
-          kind: 'warmup_example_revealed',
-          label: `Module ${moduleNumber} · Example · Reveal: ${snippet(ex.altRevealedTask || '', 24)}`,
-          summary: ex.altRevealedTask || '(no revealed task)',
-        });
-      }
+    // The module's own (editable) title is the primary label. Falls back to
+    // the type label only when the researcher left the title blank.
+    const title = 'title' in m && m.title ? m.title : labelForModuleType(m.type);
+    const push = (kind: ScreenKind, extra: Partial<Screen> = {}) =>
       out.push({
-        key: `${m.id}:warmup_intro`,
+        key: `${m.id}:${kind}${extra.idx != null ? ':' + extra.idx : ''}${
+          extra.subIdx != null ? ':' + extra.subIdx : ''
+        }`,
         moduleId: m.id,
         moduleType: m.type,
         moduleNumber,
-        moduleLabel,
-        kind: 'warmup_intro',
-        label: `Module ${moduleNumber} · Think-aloud intro`,
-        summary: 'Centered: "Think-Aloud Instructions"',
+        moduleLabel: title,
+        kind,
+        label: `${title} · ${labelFor(kind)}`,
+        summary: title,
+        ...extra,
       });
-      out.push({
-        key: `${m.id}:warmup_body`,
-        moduleId: m.id,
-        moduleType: m.type,
-        moduleNumber,
-        moduleLabel,
-        kind: 'warmup_body',
-        label: `Module ${moduleNumber} · Warmup body`,
+
+    if (m.type === 'think_aloud_example') {
+      push('warmup_example_intro');
+      push('warmup_example_body', {
         summary: snippet(m.body || m.taskDescription || ''),
       });
-      out.push({
-        key: `${m.id}:warmup_revealed`,
-        moduleId: m.id,
-        moduleType: m.type,
-        moduleNumber,
-        moduleLabel,
-        kind: 'warmup_revealed',
-        label: `Module ${moduleNumber} · Reveal: ${snippet(m.revealedTask || '', 24)}`,
+      push('warmup_example_revealed', {
         summary: m.revealedTask || '(no revealed task)',
       });
       return;
     }
-    if (m.type === 'task' || m.type === 'task_warmup') {
-      const moduleLabel =
-        m.title || (m.type === 'task_warmup' ? 'Task warmup' : 'Task');
-      // Optional example variant on task_warmup only.
-      if (m.type === 'task_warmup' && m.example) {
-        const ex = m.example;
-        out.push({
-          key: `${m.id}:task_example_intro`,
-          moduleId: m.id,
-          moduleType: m.type,
-          moduleNumber,
-          moduleLabel,
-          kind: 'task_example_intro',
-          label: `Module ${moduleNumber} · Example · Intro`,
-          summary: 'Example demo — researcher walks through this task',
-        });
-        out.push({
-          key: `${m.id}:task_example_initial_spec`,
-          moduleId: m.id,
-          moduleType: m.type,
-          moduleNumber,
-          moduleLabel,
-          kind: 'task_example_initial_spec',
-          label: `Module ${moduleNumber} · Example · Initial spec`,
-          summary: snippet(ex.prefilled.initial.spec || ex.initialSpec[0]?.prompt || ''),
-        });
-        ex.scenarios.forEach((sc, idx) => {
-          TASK_EXAMPLE_STEPS_PER_SCENARIO.forEach((kind) => {
-            out.push({
-              key: `${m.id}:${kind}:${idx}`,
-              moduleId: m.id,
-              moduleType: m.type,
-              moduleNumber,
-              moduleLabel,
-              kind,
-              idx,
-              label: `Module ${moduleNumber} · ${labelFor(kind)} (${sc.title})`,
-              summary: snippet(
-                sc.clauses.map((c) => `${c.type} ${c.text}`).join('; '),
-              ),
-            });
+
+    if (m.type === 'think_aloud_warmup') {
+      push('warmup_intro');
+      push('warmup_body', {
+        summary: snippet(m.body || m.taskDescription || ''),
+      });
+      push('warmup_revealed', {
+        summary: m.revealedTask || '(no revealed task)',
+      });
+      return;
+    }
+
+    if (m.type === 'task_example') {
+      push('task_example_intro');
+      push('task_example_initial_spec', {
+        summary: snippet(m.prefilled.initial.spec || m.initialSpec[0]?.prompt || ''),
+      });
+      m.scenarios.forEach((sc, idx) => {
+        TASK_EXAMPLE_STEPS_PER_SCENARIO.forEach((kind) => {
+          push(kind, {
+            idx,
+            label: `${title} · ${labelFor(kind)} (${sc.title})`,
+            summary: snippet(sc.clauses.map((c) => `${c.type} ${c.text}`).join('; ')),
           });
         });
-      }
+      });
+      return;
+    }
+
+    if (m.type === 'task' || m.type === 'task_warmup') {
       TASK_STEPS_BASE.forEach((kind) => {
-        out.push({
-          key: `${m.id}:${kind}`,
-          moduleId: m.id,
-          moduleType: m.type,
-          moduleNumber,
-          moduleLabel,
-          kind,
-          label: `Module ${moduleNumber} · ${labelFor(kind)}`,
+        push(kind, {
           summary:
             kind === 'task_context'
               ? snippet(m.studyContext)
               : kind === 'task_initial_spec'
               ? snippet(m.initialSpec[0]?.prompt ?? '')
-              : moduleLabel,
+              : title,
         });
       });
+      const retro = m.perScenarioRetrospective ?? [];
       m.scenarios.forEach((sc, idx) => {
         TASK_STEPS_PER_SCENARIO.forEach((kind) => {
-          out.push({
-            key: `${m.id}:${kind}:${idx}`,
-            moduleId: m.id,
-            moduleType: m.type,
-            moduleNumber,
-            moduleLabel,
-            kind,
+          push(kind, {
             idx,
-            label: `Module ${moduleNumber} · ${labelFor(kind)} (${sc.title})`,
-            summary: snippet(
-              sc.clauses.map((c) => `${c.type} ${c.text}`).join('; '),
-            ),
+            label: `${title} · ${labelFor(kind)} (${sc.title})`,
+            summary: snippet(sc.clauses.map((c) => `${c.type} ${c.text}`).join('; ')),
+          });
+        });
+        // Per-scenario retrospective questions repeat after every scenario.
+        retro.forEach((q, qIdx) => {
+          push('task_scenario_retro', {
+            idx,
+            subIdx: qIdx,
+            label: `${title} · ${labelFor('task_scenario_retro')} (${sc.title} · Q${qIdx + 1})`,
+            summary: snippet(q.text),
           });
         });
       });
       return;
     }
+
     if (m.type === 'retrospective_report') {
-      const moduleLabel = m.title || 'Retrospective';
-      // One screen per question — previously a single retrospective screen.
       m.questions.forEach((q, idx) => {
-        out.push({
-          key: `${m.id}:retrospective:${idx}`,
-          moduleId: m.id,
-          moduleType: m.type,
-          moduleNumber,
-          moduleLabel,
-          kind: 'retrospective_question',
+        push('retrospective_question', {
           idx,
-          label: `Module ${moduleNumber} · Retro Q${idx + 1}: ${snippet(q.text, 32)}`,
+          label: `${title} · Q${idx + 1}: ${snippet(q.text, 32)}`,
           summary: q.text,
         });
       });
     }
   });
   return out;
+}
+
+// Plain-English fallback when a module's title is blank. Kept local so
+// screens.ts doesn't depend on MODULE_TYPE_LABEL's exact wording.
+function labelForModuleType(type: Module['type']): string {
+  switch (type) {
+    case 'think_aloud_warmup':
+      return 'Think-aloud warmup';
+    case 'think_aloud_example':
+      return 'Think-aloud worked example';
+    case 'task_warmup':
+      return 'Warmup task';
+    case 'task_example':
+      return 'Worked example task';
+    case 'task':
+      return 'Task';
+    case 'retrospective_report':
+      return 'Retrospective';
+  }
 }
