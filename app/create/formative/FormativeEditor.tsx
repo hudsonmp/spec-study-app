@@ -14,6 +14,8 @@ import type {
   Module,
   TaskContent,
   ThinkAloudWarmupModule,
+  ThinkAloudExample,
+  TaskExample,
   RetrospectiveReportModule,
   ModuleType,
   Clause,
@@ -26,6 +28,8 @@ import type {
 import {
   MODULE_TYPE_LABEL,
   newModuleOfType,
+  newThinkAloudExample,
+  newTaskExample,
   uid,
   VEHICLE_COLOR_TO_NUMBER,
   VEHICLE_HEX,
@@ -490,20 +494,93 @@ function ThinkAloudWarmupEditor({
         <label className="flex gap-2 items-center text-[var(--muted)]">
           <input
             type="checkbox"
-            checked={m.includeScratchPaper}
-            onChange={(e) => p((w) => (w.includeScratchPaper = e.target.checked))}
-          />
-          <span>Include scratch-paper section</span>
-        </label>
-        <label className="flex gap-2 items-center text-[var(--muted)]">
-          <input
-            type="checkbox"
             checked={m.mandatory}
             onChange={(e) => p((w) => (w.mandatory = e.target.checked))}
           />
           <span>Mandatory (participant must complete)</span>
         </label>
       </div>
+      <details className="mt-4 border border-dashed border-[var(--rule)] p-3">
+        <summary className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] cursor-pointer">
+          Example demo {m.example ? '(authored)' : '(none)'}
+        </summary>
+        {m.example ? (
+          <ThinkAloudExampleEditor
+            example={m.example}
+            onChange={(next) => p((w) => (w.example = next))}
+            onClear={() => p((w) => (w.example = undefined))}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => p((w) => (w.example = newThinkAloudExample()))}
+            className="text-xs italic text-[var(--muted)] hover:text-[var(--foreground)] border border-dashed border-[var(--rule)] px-3 py-1 mt-2"
+          >
+            + Add example demo
+          </button>
+        )}
+      </details>
+    </div>
+  );
+}
+
+function ThinkAloudExampleEditor({
+  example,
+  onChange,
+  onClear,
+}: {
+  example: ThinkAloudExample;
+  onChange: (next: ThinkAloudExample) => void;
+  onClear: () => void;
+}) {
+  function set<K extends keyof ThinkAloudExample>(
+    key: K,
+    value: ThinkAloudExample[K],
+  ) {
+    onChange({ ...example, [key]: value });
+  }
+  return (
+    <div className="mt-3 space-y-3">
+      <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
+        Shown to the participant BEFORE the real warmup, with the banner
+        &ldquo;Example — the researcher will walk through this.&rdquo; Screens
+        are read-only for the participant.
+      </p>
+      <FieldLabel label="Alt task description">
+        <textarea
+          className={inputCls + ' min-h-[60px]'}
+          value={example.altTaskDescription}
+          onChange={(e) => set('altTaskDescription', e.target.value)}
+        />
+      </FieldLabel>
+      <FieldLabel label="Alt warmup body">
+        <textarea
+          className={inputCls + ' min-h-[100px]'}
+          value={example.altBody}
+          onChange={(e) => set('altBody', e.target.value)}
+        />
+      </FieldLabel>
+      <FieldLabel label="Alt revealed task">
+        <input
+          className={inputCls + ' font-mono tracking-widest'}
+          value={example.altRevealedTask}
+          onChange={(e) => set('altRevealedTask', e.target.value)}
+        />
+      </FieldLabel>
+      <FieldLabel label="Walkthrough narration (what the researcher says)">
+        <textarea
+          className={inputCls + ' min-h-[100px]'}
+          value={example.walkthroughText}
+          onChange={(e) => set('walkthroughText', e.target.value)}
+        />
+      </FieldLabel>
+      <button
+        type="button"
+        onClick={onClear}
+        className="text-xs text-[var(--danger)] hover:underline"
+      >
+        Remove example demo
+      </button>
     </div>
   );
 }
@@ -631,6 +708,42 @@ function TaskEditor({
           />
         ))}
       </Section>
+
+      {m.type === 'task_warmup' && (
+        <details className="border border-dashed border-[var(--rule)] p-3">
+          <summary className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] cursor-pointer">
+            Example demo {m.example ? '(authored)' : '(none)'}
+          </summary>
+          {m.example ? (
+            <TaskExampleEditor
+              example={m.example}
+              onChange={(next) =>
+                patch((mod) => {
+                  if (mod.type === 'task_warmup') mod.example = next;
+                })
+              }
+              onClear={() =>
+                patch((mod) => {
+                  if (mod.type === 'task_warmup') mod.example = undefined;
+                })
+              }
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() =>
+                patch((mod) => {
+                  if (mod.type === 'task_warmup')
+                    mod.example = newTaskExample(m.scenarios.length || 1);
+                })
+              }
+              className="text-xs italic text-[var(--muted)] hover:text-[var(--foreground)] border border-dashed border-[var(--rule)] px-3 py-1 mt-2"
+            >
+              + Add example demo (stub: paste JSON)
+            </button>
+          )}
+        </details>
+      )}
 
       <Section
         title={`Scenarios (${m.scenarios.length}/3)`}
@@ -774,6 +887,85 @@ function RetrospectiveReportEditor({
           </div>
         ))}
       </Section>
+    </div>
+  );
+}
+
+// =========================== Task example editor ============================
+// V1 ships as a JSON paste-box stub. The runner consumes the same TaskExample
+// shape either way; promoting to a full nested editor is mechanical follow-up
+// work. Keeping the surface here small avoids two parallel editors for what
+// is morally the same data.
+
+function TaskExampleEditor({
+  example,
+  onChange,
+  onClear,
+}: {
+  example: TaskExample;
+  onChange: (next: TaskExample) => void;
+  onClear: () => void;
+}) {
+  const [raw, setRaw] = useState<string>(() => JSON.stringify(example, null, 2));
+  const [err, setErr] = useState<string | null>(null);
+
+  function tryApply() {
+    try {
+      const parsed = JSON.parse(raw) as TaskExample;
+      // Minimal shape check; the runner is defensive on missing fields.
+      if (
+        !parsed ||
+        typeof parsed !== 'object' ||
+        !Array.isArray(parsed.scenarios) ||
+        !parsed.prefilled ||
+        !Array.isArray(parsed.prefilled.perScenario)
+      ) {
+        setErr('Missing required fields (scenarios, prefilled.perScenario).');
+        return;
+      }
+      setErr(null);
+      onChange(parsed);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Invalid JSON');
+    }
+  }
+
+  return (
+    <div className="mt-3 space-y-3">
+      <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
+        Shown BEFORE the real task with a read-only example banner. Spec
+        textareas display the prefilled snapshots and cannot be edited by the
+        participant.
+        <br />
+        <strong>V1 stub:</strong> author the example as a JSON blob matching
+        the <code>TaskExample</code> shape. <code>prefilled.perScenario</code>{' '}
+        length must equal <code>scenarios</code> length.
+      </p>
+      <textarea
+        className={inputCls + ' min-h-[280px] font-mono text-xs'}
+        value={raw}
+        onChange={(e) => setRaw(e.target.value)}
+        spellCheck={false}
+      />
+      <div className="flex gap-3 items-center">
+        <button
+          type="button"
+          onClick={tryApply}
+          className="text-xs border border-[var(--foreground)] px-3 py-1 hover:bg-[var(--foreground)] hover:text-[var(--background)]"
+        >
+          Apply
+        </button>
+        <button
+          type="button"
+          onClick={onClear}
+          className="text-xs text-[var(--danger)] hover:underline"
+        >
+          Remove example demo
+        </button>
+        {err && (
+          <span className="text-xs text-[var(--danger)] italic">{err}</span>
+        )}
+      </div>
     </div>
   );
 }
