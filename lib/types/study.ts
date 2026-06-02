@@ -25,11 +25,46 @@ export type Requirement = {
   so: string;
 };
 
+export type SeededMarkerKind = 'vehicle' | 'person';
+export type SeededVehicleColor = 'red' | 'blue' | 'green';
+export type SeededPersonLetter = 'A' | 'B' | 'C';
+
+// A marker placed by the researcher at a known landmark for this scenario.
+// Position is referenced by landmark label so it survives map-template edits;
+// if the landmark is deleted, the marker is rendered at the cityMap.origin.
+export type SeededMarker =
+  | {
+      kind: 'vehicle';
+      color: SeededVehicleColor; // label is derived: red=Vehicle 1, blue=Vehicle 2, green=Vehicle 3
+      landmarkLabel: string;     // matches CityMapLandmark.label or origin.label
+    }
+  | {
+      kind: 'person';
+      letter: SeededPersonLetter; // label derived: Person A/B/C
+      personColor: string;        // hex or palette key, picked by researcher
+      landmarkLabel: string;
+    };
+
+export const VEHICLE_COLOR_TO_NUMBER: Record<SeededVehicleColor, 1 | 2 | 3> = {
+  red: 1,
+  blue: 2,
+  green: 3,
+};
+
+export const VEHICLE_HEX: Record<SeededVehicleColor, string> = {
+  red: '#c44',
+  blue: '#36a',
+  green: '#3a6',
+};
+
+export const PERSON_PALETTE: string[] = ['#d97a3a', '#7d50b8', '#2f9b9b'];
+
 export type Scenario = {
   id: string;
   title: string;
   facilitatorNote: string;
   clauses: Clause[];
+  seededMarkers?: SeededMarker[];
 };
 
 export type CityMapLandmark = {

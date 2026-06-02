@@ -888,6 +888,7 @@ function ScenarioReadStep({
             onEvent={(eventType, payload) =>
               save.recordEvent(eventType, payload)
             }
+            seededMarkers={scenario.seededMarkers ?? []}
           />
         )}
       </section>
@@ -1031,6 +1032,7 @@ function ScenarioReviseStep({
               onEvent={(eventType, payload) =>
                 save.recordEvent(eventType, payload)
               }
+              seededMarkers={scenario.seededMarkers ?? []}
             />
           )}
         </section>

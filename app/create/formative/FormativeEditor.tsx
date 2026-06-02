@@ -19,11 +19,17 @@ import type {
   Clause,
   ClauseMarker,
   CityMap,
+  SeededMarker,
+  SeededVehicleColor,
+  SeededPersonLetter,
 } from '@/lib/types/study';
 import {
   MODULE_TYPE_LABEL,
   newModuleOfType,
   uid,
+  VEHICLE_COLOR_TO_NUMBER,
+  VEHICLE_HEX,
+  PERSON_PALETTE,
 } from '@/lib/types/study';
 import {
   contentReducer,
@@ -670,6 +676,7 @@ function TaskEditor({
             patch={(fn) => p((t) => fn(t.scenarios[i]))}
             onMove={(dir) => p((t) => void moveInArray(t.scenarios, i, dir))}
             onDelete={() => p((t) => t.scenarios.splice(i, 1))}
+            module={m}
           />
         ))}
       </Section>
@@ -771,6 +778,142 @@ function RetrospectiveReportEditor({
   );
 }
 
+// =========================== Scenario block helpers ============================
+
+function landmarkOptions(
+  m: Extract<Module, { type: 'task' | 'task_warmup' }>,
+): string[] {
+  const map = m.cityMap;
+  if (!map) return [];
+  const out: string[] = [];
+  out.push(map.origin.label);
+  for (const l of map.landmarks) out.push(l.label);
+  return Array.from(new Set(out));
+}
+
+function SeededMarkerEditor({
+  markers,
+  landmarks,
+  onChange,
+}: {
+  markers: SeededMarker[];
+  landmarks: string[];
+  onChange: (next: SeededMarker[]) => void;
+}) {
+  if (landmarks.length === 0) {
+    return (
+      <p className="text-xs italic text-[var(--muted)] mt-2">
+        Add landmarks to the city map above first, then seed markers here.
+      </p>
+    );
+  }
+  const usedVehicleColors = new Set(
+    markers
+      .filter((m): m is Extract<SeededMarker, { kind: 'vehicle' }> => m.kind === 'vehicle')
+      .map((m) => m.color),
+  );
+  const usedPersonLetters = new Set(
+    markers
+      .filter((m): m is Extract<SeededMarker, { kind: 'person' }> => m.kind === 'person')
+      .map((m) => m.letter),
+  );
+  const availableVehicles: SeededVehicleColor[] = (
+    ['red', 'blue', 'green'] as const
+  ).filter((c) => !usedVehicleColors.has(c));
+  const availablePeople: SeededPersonLetter[] = (
+    ['A', 'B', 'C'] as const
+  ).filter((l) => !usedPersonLetters.has(l));
+
+  function addVehicle() {
+    const color = availableVehicles[0];
+    if (!color) return;
+    onChange([
+      ...markers,
+      { kind: 'vehicle', color, landmarkLabel: landmarks[0] },
+    ]);
+  }
+  function addPerson() {
+    const letter = availablePeople[0];
+    if (!letter) return;
+    const personColor =
+      PERSON_PALETTE[usedPersonLetters.size] ?? PERSON_PALETTE[0];
+    onChange([
+      ...markers,
+      { kind: 'person', letter, personColor, landmarkLabel: landmarks[0] },
+    ]);
+  }
+  function update(i: number, patch: Partial<SeededMarker>) {
+    const next = markers.slice();
+    next[i] = { ...next[i], ...patch } as SeededMarker;
+    onChange(next);
+  }
+  function remove(i: number) {
+    onChange(markers.filter((_, idx) => idx !== i));
+  }
+
+  return (
+    <div className="space-y-2 mt-2">
+      {markers.map((m, i) => (
+        <div
+          key={i}
+          className="grid grid-cols-[60px_70px_1fr_auto] gap-2 items-center text-sm"
+        >
+          <span className="text-xs text-[var(--muted)]">
+            {m.kind === 'vehicle'
+              ? `Veh ${VEHICLE_COLOR_TO_NUMBER[m.color]}`
+              : `Person ${m.letter}`}
+          </span>
+          <span
+            className="h-4 w-4 inline-block border border-[var(--rule)]"
+            style={{
+              background:
+                m.kind === 'vehicle' ? VEHICLE_HEX[m.color] : m.personColor,
+            }}
+          />
+          <select
+            value={m.landmarkLabel}
+            onChange={(e) =>
+              update(i, { landmarkLabel: e.target.value } as Partial<SeededMarker>)
+            }
+            className="border border-[var(--rule)] px-2 py-1 bg-white text-sm"
+          >
+            {landmarks.map((l) => (
+              <option key={l} value={l}>
+                {l}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => remove(i)}
+            className="text-xs text-[var(--muted)] hover:text-[var(--danger)]"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={addVehicle}
+          disabled={availableVehicles.length === 0}
+          className="text-xs italic text-[var(--muted)] hover:text-[var(--foreground)] border border-dashed border-[var(--rule)] px-2 py-1 disabled:opacity-30"
+        >
+          + vehicle ({availableVehicles.length} left)
+        </button>
+        <button
+          type="button"
+          onClick={addPerson}
+          disabled={availablePeople.length === 0}
+          className="text-xs italic text-[var(--muted)] hover:text-[var(--foreground)] border border-dashed border-[var(--rule)] px-2 py-1 disabled:opacity-30"
+        >
+          + person ({availablePeople.length} left)
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // =========================== Scenario block ============================
 
 function ScenarioBlock({
@@ -780,6 +923,7 @@ function ScenarioBlock({
   patch,
   onMove,
   onDelete,
+  module: parentModule,
 }: {
   scenario: TaskContent['scenarios'][number];
   index: number;
@@ -789,6 +933,7 @@ function ScenarioBlock({
   ) => void;
   onMove: (dir: -1 | 1) => void;
   onDelete: () => void;
+  module: Extract<Module, { type: 'task' | 'task_warmup' }>;
 }) {
   return (
     <div className="border border-[var(--rule)] bg-white p-3 mb-2">
@@ -906,6 +1051,21 @@ function ScenarioBlock({
       >
         + append clause at end
       </button>
+
+      <details className="mt-2 border border-dashed border-[var(--rule)] p-2">
+        <summary className="text-xs italic text-[var(--muted)] cursor-pointer">
+          Pre-seeded map markers ({(scenario.seededMarkers ?? []).length})
+        </summary>
+        <SeededMarkerEditor
+          markers={scenario.seededMarkers ?? []}
+          landmarks={landmarkOptions(parentModule)}
+          onChange={(next) =>
+            patch((sc) => {
+              sc.seededMarkers = next;
+            })
+          }
+        />
+      </details>
 
       <details className="mt-2">
         <summary className="text-xs italic text-[var(--muted)] cursor-pointer">

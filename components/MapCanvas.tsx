@@ -8,7 +8,8 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
-import type { CityMap } from '@/lib/types/study';
+import type { CityMap, SeededMarker } from '@/lib/types/study';
+import { VEHICLE_COLOR_TO_NUMBER, VEHICLE_HEX, PERSON_PALETTE } from '@/lib/types/study';
 
 const CELL = 22;
 const PALETTE: string[] = [
@@ -36,6 +37,7 @@ export type MapCanvasProps = {
   scenarioId: string;
   storageKey: string;
   onEvent: (eventType: string, payload: unknown) => void;
+  seededMarkers?: SeededMarker[];
 };
 
 function newMarkerId(): string {
@@ -55,6 +57,7 @@ export default function MapCanvas({
   scenarioId,
   storageKey,
   onEvent,
+  seededMarkers = [],
 }: MapCanvasProps) {
   const N = map.gridSize || 20;
   const size = N * CELL;
@@ -181,6 +184,21 @@ export default function MapCanvas({
     }
     const pos = pointerToGrid(e.clientX, e.clientY);
     if (!pos) return;
+
+    // Cap total vehicles (participant + seeded) at 3.
+    if (pendingType === 'vehicle') {
+      const seededVehicleCount = seededMarkers.filter(
+        (sm) => sm.kind === 'vehicle',
+      ).length;
+      const participantVehicleCount = markers.filter(
+        (m) => m.type === 'vehicle',
+      ).length;
+      if (participantVehicleCount + seededVehicleCount >= 3) {
+        setPlaceMode(false);
+        return;
+      }
+    }
+
     const id = newMarkerId();
     const ts = new Date().toISOString();
     const marker: Marker = {
@@ -498,6 +516,77 @@ export default function MapCanvas({
                 pointerEvents="none"
               >
                 {m.label}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Seeded markers (researcher-placed, not draggable/deletable) */}
+        {seededMarkers.map((sm, i) => {
+          // Resolve landmark label → coordinates
+          let lx = map.origin.x;
+          let ly = map.origin.y;
+          const lm = map.landmarks.find((l) => l.label === sm.landmarkLabel);
+          if (lm) {
+            lx = lm.x;
+            ly = lm.y;
+          } else if (map.origin.label === sm.landmarkLabel) {
+            lx = map.origin.x;
+            ly = map.origin.y;
+          }
+          const cx = lx * CELL;
+          const cy = ly * CELL;
+
+          const fillColor =
+            sm.kind === 'vehicle'
+              ? VEHICLE_HEX[sm.color]
+              : sm.personColor;
+          const label =
+            sm.kind === 'vehicle'
+              ? `Veh ${VEHICLE_COLOR_TO_NUMBER[sm.color]}`
+              : `Person ${sm.letter}`;
+
+          return (
+            <g key={`seeded-${i}`} pointerEvents="none">
+              {/* Seeded indicator dot above the shape */}
+              <circle
+                cx={cx}
+                cy={cy - 12}
+                r={3}
+                fill={fillColor}
+                stroke="#1a1a1a"
+                strokeWidth={1}
+              />
+              {sm.kind === 'vehicle' ? (
+                <rect
+                  x={cx - 7}
+                  y={cy - 4}
+                  width={14}
+                  height={8}
+                  rx={2}
+                  ry={2}
+                  fill={fillColor}
+                  stroke="#1a1a1a"
+                  strokeWidth={2}
+                />
+              ) : (
+                <circle
+                  cx={cx}
+                  cy={cy}
+                  r={5}
+                  fill={fillColor}
+                  stroke="#1a1a1a"
+                  strokeWidth={2}
+                />
+              )}
+              <text
+                x={cx}
+                y={cy + 16}
+                fontSize={9}
+                fill="#1a1a1a"
+                textAnchor="middle"
+              >
+                {label}
               </text>
             </g>
           );
