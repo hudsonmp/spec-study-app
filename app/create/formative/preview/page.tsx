@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { listProjects } from '../actions';
-import ParticipantFlow from './ParticipantFlow';
+import PreviewBrowser from './PreviewBrowser';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,5 +31,5 @@ export default async function PreviewPage(props: {
     );
   }
 
-  return <ParticipantFlow project={active} />;
+  return <PreviewBrowser project={active} allProjects={projects} />;
 }

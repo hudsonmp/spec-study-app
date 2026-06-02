@@ -119,16 +119,64 @@ export type ThinkAloudExample = {
   walkthroughText: string;
 };
 
+// Researcher-customizable on-screen copy for the warmup screens. Every field
+// is optional; renderers fall back to DEFAULT_WARMUP_COPY when a field is
+// absent or empty. Add new keys here when surfacing more strings as editable.
+export type ThinkAloudWarmupCopy = {
+  introTitle?: string;
+  introBody?: string;
+  revealButtonLabel?: string;
+  postRevealCallout?: string;
+  answerInputLabel?: string;
+};
+
+export const DEFAULT_WARMUP_COPY: Required<ThinkAloudWarmupCopy> = {
+  introTitle: 'Think-Aloud Instructions',
+  introBody: 'Please do not move on until directed by the researcher.',
+  revealButtonLabel: 'Reveal Task',
+  postRevealCallout: 'Remember to think aloud while you solve this.',
+  answerInputLabel: 'Your answer',
+};
+
 export type ThinkAloudWarmupModule = {
   id: string;
   type: 'think_aloud_warmup';
   title: string;
   taskDescription: string;
   body: string;
+  // `revealedTask` is the scrambled prompt shown to the participant (e.g.
+  // "DUYTS"). `revealedAnswer` is the unscrambled target ("STUDY") — used
+  // only to display an answer-key on the researcher console and to log
+  // exact-match for analysis; not required for the runner to function.
   revealedTask: string;
+  revealedAnswer: string;
   includeScratchPaper: boolean; // ignored — scratchpad removed; kept for back-compat
   mandatory: boolean;
   example?: ThinkAloudExample;
+  copy?: ThinkAloudWarmupCopy;
+};
+
+// Researcher-customizable on-screen copy for task screens. Every field is
+// optional; renderers fall back to DEFAULT_TASK_COPY when a field is absent
+// or empty. Per-scenario `ponderCopy` already lives on Scenario.
+export type TaskCopy = {
+  ponderDefault?: string;
+  ponderHoldNote?: string;
+  reviseCallout?: string;
+  warmupAnnotation?: string;
+  realAnnotation?: string;
+};
+
+export const DEFAULT_TASK_COPY: Required<TaskCopy> = {
+  ponderDefault:
+    'Can you tell me everything you remember, or were thinking about, when you analyzed the last scenario?',
+  ponderHoldNote: 'Please do not click Continue until your researcher tells you to.',
+  reviseCallout:
+    'Your specifications are editable. Continue thinking aloud as you revise them.',
+  warmupAnnotation:
+    'This is a warmup task. Your responses are not saved or analyzed; they are practice only.',
+  realAnnotation:
+    'Your responses for this task will be saved and included in the study analysis.',
 };
 
 // Shared task-shaped content. Used by both Task and TaskWarmup (warmup is the
@@ -141,6 +189,7 @@ export type TaskContent = {
   cityMap?: CityMap;
   initialSpec: SpecSubsection[];
   scenarios: Scenario[]; // 1-3 enforced by the editor
+  copy?: TaskCopy;
 };
 
 // =========================== Entity / Element table ===========================
@@ -244,7 +293,9 @@ export function newThinkAloudWarmup(): ThinkAloudWarmupModule {
     title: 'Think-aloud warmup',
     taskDescription: '',
     body: '',
-    revealedTask: '',
+    // Default anagram: DUYTS → STUDY. Researcher edits in the editor.
+    revealedTask: 'DUYTS',
+    revealedAnswer: 'STUDY',
     includeScratchPaper: false,
     mandatory: false,
   };

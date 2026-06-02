@@ -2,6 +2,33 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getResearcherSession } from '@/lib/auth/researcher';
+import { createServiceRoleClient } from '@/lib/supabase/service';
+import { migrateContent } from '@/lib/study/reducer';
+import type { ThinkAloudWarmupModule } from '@/lib/types/study';
+
+// Pull the active study's first think-aloud warmup so the researcher answer
+// key card matches whatever the participant will see — instead of being a
+// frozen literal that drifts when the warmup anagram is edited.
+async function loadActiveAnagram(): Promise<
+  { scrambled: string; answer: string } | null
+> {
+  const supabase = createServiceRoleClient();
+  const { data: shown } = await supabase
+    .from('studies')
+    .select('authored_data')
+    .eq('visibility', 'shown')
+    .maybeSingle();
+  if (!shown) return null;
+  const content = migrateContent(shown.authored_data);
+  const warmup = content.modules.find(
+    (m): m is ThinkAloudWarmupModule => m.type === 'think_aloud_warmup',
+  );
+  if (!warmup) return null;
+  const scrambled = warmup.revealedTask?.trim();
+  const answer = warmup.revealedAnswer?.trim();
+  if (!scrambled || !answer) return null;
+  return { scrambled, answer };
+}
 
 export default async function Home() {
   const [user, researcher] = await Promise.all([
@@ -10,10 +37,13 @@ export default async function Home() {
   ]);
   const isResearcher = researcher.ok === true;
   const isParticipant = user !== null;
+  const anagram = isResearcher ? await loadActiveAnagram() : null;
 
-  // Both roles authenticated — show role picker so the researcher can choose
-  // whether they're running the study or piloting it as a participant.
-  if (isParticipant && isResearcher) {
+  // Researcher session present → always show the picker so the researcher
+  // can hop into /create or pilot the participant flow without getting
+  // bounced back to /create. The participant card adapts: continue when
+  // a participant cookie is also set, register/login otherwise.
+  if (isResearcher) {
     return (
       <main className="flex-1 flex items-center justify-center px-6 py-16">
         <div className="max-w-xl w-full">
@@ -22,8 +52,8 @@ export default async function Home() {
               Which side?
             </h1>
             <p className="text-sm text-[var(--muted)] mt-1">
-              You&rsquo;re signed in to both the participant and the
-              researcher session. Pick one.
+              You&rsquo;re signed in as researcher. Open the console or
+              walk through the study as a participant.
             </p>
           </header>
 
@@ -39,38 +69,62 @@ export default async function Home() {
                 Console: questionnaire, protocol, script, walkthrough.
               </span>
             </Link>
-            <Link
-              href={user.has_onboarded ? '/study' : '/onboard'}
-              className="border border-[var(--foreground)] p-5 hover:bg-[var(--foreground)] hover:text-[var(--background)] transition flex flex-col gap-2"
-            >
-              <span className="text-lg font-medium tracking-tight">
-                Participant
-              </span>
-              <span className="text-sm opacity-80">
-                Continue as {user.first_name} (PID {user.pid}).
-              </span>
-            </Link>
+            {isParticipant ? (
+              <Link
+                href={user.has_onboarded ? '/study' : '/onboard'}
+                className="border border-[var(--foreground)] p-5 hover:bg-[var(--foreground)] hover:text-[var(--background)] transition flex flex-col gap-2"
+              >
+                <span className="text-lg font-medium tracking-tight">
+                  Participant
+                </span>
+                <span className="text-sm opacity-80">
+                  Continue as {user.first_name} (PID {user.pid}).
+                </span>
+              </Link>
+            ) : (
+              <div className="border border-[var(--foreground)] p-5 flex flex-col gap-2">
+                <span className="text-lg font-medium tracking-tight">
+                  Participant
+                </span>
+                <span className="text-sm opacity-80">
+                  Pilot the study as a participant.
+                </span>
+                <div className="grid grid-cols-2 gap-2 pt-2">
+                  <Link
+                    href="/register"
+                    className="text-center border border-[var(--foreground)] py-2 text-sm hover:bg-[var(--foreground)] hover:text-[var(--background)] transition"
+                  >
+                    Register
+                  </Link>
+                  <Link
+                    href="/login"
+                    className="text-center border border-[var(--foreground)] py-2 text-sm hover:bg-[var(--foreground)] hover:text-[var(--background)] transition"
+                  >
+                    Log in
+                  </Link>
+                </div>
+              </div>
+            )}
           </div>
 
-          <section className="mt-10 border border-dashed border-[var(--rule)] bg-[var(--rule-soft)] p-4">
-            <p className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-2">
-              Researcher answer key · Think-aloud anagram
-            </p>
-            <p className="font-mono text-2xl tracking-[0.4em]">
-              NPEPHA &nbsp;→&nbsp; HAPPEN
-            </p>
-          </section>
+          {anagram ? (
+            <section className="mt-10 border border-dashed border-[var(--rule)] bg-[var(--rule-soft)] p-4">
+              <p className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-2">
+                Researcher answer key · Think-aloud anagram
+              </p>
+              <p className="font-mono text-2xl tracking-[0.4em]">
+                {anagram.scrambled} &nbsp;→&nbsp; {anagram.answer}
+              </p>
+            </section>
+          ) : null}
         </div>
       </main>
     );
   }
 
-  // Existing single-role behavior.
+  // Participant-only — auto-route to their next screen.
   if (isParticipant) {
     redirect(user.has_onboarded ? '/study' : '/onboard');
-  }
-  if (isResearcher) {
-    redirect('/create');
   }
 
   return (

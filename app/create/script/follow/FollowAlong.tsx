@@ -2,6 +2,11 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import {
+  Group as PanelGroup,
+  Panel,
+  Separator as PanelResizeHandle,
+} from 'react-resizable-panels';
 import type { Screen } from '@/lib/study/screens';
 import type {
   Module,
@@ -10,8 +15,45 @@ import type {
   ThinkAloudWarmupModule,
   TaskModule,
   TaskWarmupModule,
+  TaskContent,
   RetrospectiveReportModule,
 } from '@/lib/types/study';
+import {
+  DEFAULT_WARMUP_COPY,
+  DEFAULT_TASK_COPY,
+} from '@/lib/types/study';
+
+// Pull the same overrides ParticipantFlow uses so the script preview stays
+// in sync when the researcher edits a module's copy slot.
+function warmupCopyFor(m: ThinkAloudWarmupModule) {
+  return {
+    introTitle: m.copy?.introTitle?.trim() || DEFAULT_WARMUP_COPY.introTitle,
+    introBody: m.copy?.introBody?.trim() || DEFAULT_WARMUP_COPY.introBody,
+    revealButtonLabel:
+      m.copy?.revealButtonLabel?.trim() ||
+      DEFAULT_WARMUP_COPY.revealButtonLabel,
+    postRevealCallout:
+      m.copy?.postRevealCallout?.trim() ||
+      DEFAULT_WARMUP_COPY.postRevealCallout,
+    answerInputLabel:
+      m.copy?.answerInputLabel?.trim() ||
+      DEFAULT_WARMUP_COPY.answerInputLabel,
+  };
+}
+
+function taskCopyFor(copy: TaskContent['copy']) {
+  return {
+    ponderDefault: copy?.ponderDefault?.trim() || DEFAULT_TASK_COPY.ponderDefault,
+    ponderHoldNote:
+      copy?.ponderHoldNote?.trim() || DEFAULT_TASK_COPY.ponderHoldNote,
+    reviseCallout:
+      copy?.reviseCallout?.trim() || DEFAULT_TASK_COPY.reviseCallout,
+    warmupAnnotation:
+      copy?.warmupAnnotation?.trim() || DEFAULT_TASK_COPY.warmupAnnotation,
+    realAnnotation:
+      copy?.realAnnotation?.trim() || DEFAULT_TASK_COPY.realAnnotation,
+  };
+}
 
 export default function FollowAlong({
   projectId,
@@ -94,55 +136,77 @@ export default function FollowAlong({
           ← Hub
         </Link>
       </header>
-      <div
-        className="flex-1 grid overflow-hidden"
-        style={{
-          gridTemplateColumns: railOpen ? '1fr 360px' : '1fr 32px',
-        }}
-      >
-        <section className="overflow-y-auto p-8">
-          <div className="max-w-3xl mx-auto">
-            {isGlobalScreen ? (
-              <GlobalScreenPreview screen={screen} />
-            ) : module ? (
-              <ScreenPreview screen={screen} module={module} />
-            ) : (
-              <p className="italic text-[var(--muted)]">(module not found)</p>
-            )}
-          </div>
-        </section>
-        <aside className="border-l border-[var(--rule)] bg-[var(--panel)] overflow-y-auto">
-          {railOpen ? (
-            <div className="p-4">
-              <details
-                open={refOpen}
-                onToggle={(e) =>
-                  setRefOpen((e.target as HTMLDetailsElement).open)
-                }
-                className="mb-4 border border-dashed border-[var(--rule)] p-3"
-              >
-                <summary className="text-xs uppercase tracking-wider text-[var(--muted)] cursor-pointer">
-                  Think-aloud reference (SIGCSE)
-                </summary>
-                <p className="whitespace-pre-wrap leading-relaxed text-sm mt-2">
-                  {referenceScript}
-                </p>
-              </details>
-              <div className="text-xs uppercase tracking-wider text-[var(--muted)] mb-2">
-                Researcher script
-              </div>
-              {script ? (
-                <p className="whitespace-pre-wrap leading-relaxed">{script}</p>
+      <div className="flex-1 overflow-hidden">
+        {railOpen ? (
+          <PanelGroup orientation="horizontal" className="h-full">
+            <Panel defaultSize={70} minSize={40}>
+              <section className="h-full overflow-y-auto p-8">
+                <div className="max-w-3xl mx-auto">
+                  {isGlobalScreen ? (
+                    <GlobalScreenPreview screen={screen} />
+                  ) : module ? (
+                    <ScreenPreview screen={screen} module={module} />
+                  ) : (
+                    <p className="italic text-[var(--muted)]">
+                      (module not found)
+                    </p>
+                  )}
+                </div>
+              </section>
+            </Panel>
+            <PanelResizeHandle
+              className="group relative w-2 cursor-col-resize bg-[var(--panel)]"
+              aria-label="Drag to resize the script rail"
+            >
+              <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-[var(--rule)] group-hover:bg-[var(--accent)] group-data-[resize-handle-active]:bg-[var(--accent)] transition-colors" />
+            </PanelResizeHandle>
+            <Panel defaultSize={30} minSize={15} maxSize={60}>
+              <aside className="h-full overflow-y-auto bg-[var(--panel)] border-l border-[var(--rule)]">
+                <div className="p-4">
+                  {/* Per-screen script lives above the SIGCSE reference — primary content first. */}
+                  <div className="text-xs uppercase tracking-wider text-[var(--muted)] mb-2">
+                    Researcher script
+                  </div>
+                  {script ? (
+                    <p className="whitespace-pre-wrap leading-relaxed mb-6">
+                      {script}
+                    </p>
+                  ) : (
+                    <p className="italic text-[var(--muted)] mb-6">
+                      No script for this screen yet.
+                    </p>
+                  )}
+                  <details
+                    open={refOpen}
+                    onToggle={(e) =>
+                      setRefOpen((e.target as HTMLDetailsElement).open)
+                    }
+                    className="border border-dashed border-[var(--rule)] p-3"
+                  >
+                    <summary className="text-xs uppercase tracking-wider text-[var(--muted)] cursor-pointer">
+                      Think-aloud reference (SIGCSE)
+                    </summary>
+                    <p className="whitespace-pre-wrap leading-relaxed text-sm mt-2">
+                      {referenceScript}
+                    </p>
+                  </details>
+                </div>
+              </aside>
+            </Panel>
+          </PanelGroup>
+        ) : (
+          <section className="h-full overflow-y-auto p-8">
+            <div className="max-w-3xl mx-auto">
+              {isGlobalScreen ? (
+                <GlobalScreenPreview screen={screen} />
+              ) : module ? (
+                <ScreenPreview screen={screen} module={module} />
               ) : (
-                <p className="italic text-[var(--muted)]">
-                  No script for this screen yet.
-                </p>
+                <p className="italic text-[var(--muted)]">(module not found)</p>
               )}
             </div>
-          ) : (
-            <div className="h-full" />
-          )}
-        </aside>
+          </section>
+        )}
       </div>
     </div>
   );
@@ -170,7 +234,7 @@ function ExampleBannerInline() {
   );
 }
 
-function ScreenPreview({
+export function ScreenPreview({
   screen,
   module,
 }: {
@@ -180,12 +244,13 @@ function ScreenPreview({
   switch (screen.kind) {
     case 'warmup_example_intro': {
       if (!isWarmup(module) || !module.example) return <Unsupported />;
+      const copy = warmupCopyFor(module);
       return (
         <div>
           <ExampleBannerInline />
           <div className="flex flex-col items-center text-center max-w-xl mx-auto py-12">
             <h2 className="text-2xl font-medium tracking-tight mb-4">
-              Think-Aloud Instructions
+              {copy.introTitle}
             </h2>
             <p className="text-[var(--muted)] leading-relaxed">
               The researcher will demonstrate the think-aloud method.
@@ -374,13 +439,14 @@ function ScreenPreview({
 
     case 'warmup_intro': {
       if (!isWarmup(module)) return <Unsupported />;
+      const copy = warmupCopyFor(module);
       return (
         <div className="flex flex-col items-center text-center max-w-xl mx-auto py-12">
           <h2 className="text-2xl font-medium tracking-tight mb-4">
-            Think-Aloud Instructions
+            {copy.introTitle}
           </h2>
-          <p className="text-[var(--muted)] leading-relaxed">
-            Please do not move on until directed by the researcher.
+          <p className="text-[var(--muted)] leading-relaxed whitespace-pre-wrap">
+            {copy.introBody}
           </p>
         </div>
       );
@@ -388,6 +454,7 @@ function ScreenPreview({
 
     case 'warmup_body': {
       if (!isWarmup(module)) return <Unsupported />;
+      const copy = warmupCopyFor(module);
       return (
         <div className="space-y-4">
           <h2 className="text-2xl font-medium tracking-tight">
@@ -402,7 +469,7 @@ function ScreenPreview({
             <p className="whitespace-pre-wrap leading-relaxed">{module.body}</p>
           )}
           <p className="italic text-[var(--muted)] text-sm mt-6">
-            (Reveal Task button is shown to participants here.)
+            ({copy.revealButtonLabel} button is shown to participants here.)
           </p>
         </div>
       );
@@ -427,12 +494,16 @@ function ScreenPreview({
             <div className="text-xs uppercase tracking-wide text-[var(--muted)] mb-3">
               Task
             </div>
-            <div className="font-mono text-3xl tracking-[0.4em]">
+            <div className="font-mono text-3xl tracking-[0.4em] mb-3">
               {module.revealedTask}
             </div>
+            <p className="text-xs italic text-[var(--muted)]">
+              ({warmupCopyFor(module).answerInputLabel} input shown to
+              participants here. Answer key: {module.revealedAnswer || '—'})
+            </p>
           </div>
           <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
-            Remember to think aloud while you solve this.
+            {warmupCopyFor(module).postRevealCallout}
           </p>
         </div>
       );
@@ -532,12 +603,17 @@ function ScreenPreview({
     }
 
     case 'task_scenario_ponder': {
+      const tCopy = isTaskLike(module)
+        ? taskCopyFor(module.copy)
+        : taskCopyFor(undefined);
       return (
         <div className="flex flex-col items-center text-center max-w-xl mx-auto py-12">
           <h2 className="text-2xl font-medium tracking-tight mb-4">Pause</h2>
-          <p className="text-[var(--muted)] leading-relaxed">
-            Take a moment to think about this scenario before revising your
-            specification.
+          <p className="text-[var(--muted)] leading-relaxed whitespace-pre-wrap">
+            {tCopy.ponderDefault}
+          </p>
+          <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2 mt-4">
+            {tCopy.ponderHoldNote}
           </p>
         </div>
       );
@@ -549,13 +625,14 @@ function ScreenPreview({
         return <Unsupported />;
       }
       const scenario = module.scenarios[screen.idx];
+      const tCopy = taskCopyFor(module.copy);
       return (
         <div className="space-y-4">
           <h2 className="text-2xl font-medium tracking-tight">
             {module.title} · {scenario.title}
           </h2>
           <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
-            Revise your specification to account for this scenario.
+            {tCopy.reviseCallout}
           </p>
           <ul className="space-y-2">
             {scenario.clauses.map((clause) => (
@@ -685,7 +762,7 @@ function PrefilledSpecPreview({
 // Pre-study / global screens have no module. Render a faithful mock of what
 // the participant sees (or doesn't yet see) so the researcher reading the
 // script has the right mental model.
-function GlobalScreenPreview({ screen }: { screen: Screen }) {
+export function GlobalScreenPreview({ screen }: { screen: Screen }) {
   if (screen.kind === 'pre_system') {
     return (
       <div className="flex flex-col items-center text-center max-w-xl mx-auto py-12">

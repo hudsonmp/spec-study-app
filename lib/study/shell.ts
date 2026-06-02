@@ -14,9 +14,11 @@ export function shellProjectContent(): ProjectContent {
         title: '<title for the think-aloud warmup>',
         taskDescription:
           '<one or two sentences describing what the participant is asked to do during the warmup>',
-        body:
-          '<the warmup body — the actual prompt or scenario the participant works through>',
-        revealedTask: '<the task text revealed to the participant after warmup>',
+        // Leave body empty when the script delivers this content verbally;
+        // anything authored here renders on-screen to the participant.
+        body: '',
+        revealedTask: 'DUYTS',
+        revealedAnswer: 'STUDY',
         includeScratchPaper: false,
         mandatory: false,
       },

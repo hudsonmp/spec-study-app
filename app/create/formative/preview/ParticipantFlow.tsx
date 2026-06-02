@@ -7,6 +7,7 @@ import {
   Panel,
   Separator as PanelResizeHandle,
 } from 'react-resizable-panels';
+import { enumerateScreens, type Screen } from '@/lib/study/screens';
 import type {
   LoadedProject,
   Module,
@@ -20,7 +21,12 @@ import type {
   Entity,
   Element as EntityElement,
 } from '@/lib/types/study';
-import { MODULE_TYPE_LABEL, uid } from '@/lib/types/study';
+import {
+  MODULE_TYPE_LABEL,
+  uid,
+  DEFAULT_WARMUP_COPY,
+  DEFAULT_TASK_COPY,
+} from '@/lib/types/study';
 import {
   recordEventAction,
   upsertResponseAction,
@@ -225,9 +231,30 @@ function useDebouncedSave(value: string, save: (v: string) => void, ms = 1000) {
 export default function ParticipantFlow({
   project,
   participantId = null,
+  previewMode = false,
 }: {
   project: LoadedProject;
   participantId?: string | null;
+  // Preview mode: full-fidelity participant rendering driven by an external
+  // screen index. Wrapper exposes Prev/Next/Jump controls and the runners
+  // remount on screen change instead of advancing internal state. NEVER
+  // pass true on the live /study route — it disables sequential persistence.
+  previewMode?: boolean;
+}) {
+  if (previewMode) {
+    return <PreviewParticipantFlow project={project} />;
+  }
+  return (
+    <SequentialParticipantFlow project={project} participantId={participantId} />
+  );
+}
+
+function SequentialParticipantFlow({
+  project,
+  participantId,
+}: {
+  project: LoadedProject;
+  participantId: string | null;
 }) {
   const [moduleIdx, setModuleIdx] = useState(0);
   const total = project.content.modules.length;
@@ -299,6 +326,251 @@ export default function ParticipantFlow({
   );
 }
 
+// ========================== Preview-mode wrapper ==========================
+// Renders the SAME participant runners with full fidelity (no placeholders)
+// while exposing prev/next/jump controls. Each runner advances by calling
+// onAdvance() which bumps screenIdx; the key={screen.key} remount strategy
+// resets internal step state to match the new screen.
+
+function screenToWarmupPhase(screen: Screen): WarmupPhase {
+  switch (screen.kind) {
+    case 'warmup_example_intro':
+      return 'example_intro';
+    case 'warmup_example_body':
+      return 'example_body';
+    case 'warmup_example_revealed':
+      return 'example_revealed';
+    case 'warmup_intro':
+      return 'intro';
+    case 'warmup_body':
+      return 'body';
+    case 'warmup_revealed':
+      return 'revealed';
+    default:
+      return 'intro';
+  }
+}
+
+function screenToTaskStep(screen: Screen): TaskStep {
+  const idx = screen.idx ?? 0;
+  switch (screen.kind) {
+    case 'task_intro':
+      return { kind: 'intro' };
+    case 'task_context':
+      return { kind: 'context' };
+    case 'task_initial_spec':
+      return { kind: 'initial_spec' };
+    case 'task_scenario_read':
+      return { kind: 'scenario_read', idx };
+    case 'task_scenario_ponder':
+      return { kind: 'scenario_ponder', idx };
+    case 'task_scenario_revise':
+      return { kind: 'scenario_revise', idx };
+    case 'task_example_intro':
+      return { kind: 'example_intro' };
+    case 'task_example_initial_spec':
+      return { kind: 'example_initial_spec' };
+    case 'task_example_scenario_read':
+      return { kind: 'example_scenario_read', idx };
+    case 'task_example_scenario_ponder':
+      return { kind: 'example_scenario_ponder', idx };
+    case 'task_example_scenario_revise':
+      return { kind: 'example_scenario_revise', idx };
+    default:
+      return { kind: 'intro' };
+  }
+}
+
+function PreviewParticipantFlow({ project }: { project: LoadedProject }) {
+  // Drop globals — those are real /register and /onboard pages, not
+  // ParticipantFlow screens. The preview lets you navigate module screens
+  // with full participant fidelity.
+  const screens = useMemo(
+    () =>
+      enumerateScreens(project.content).filter(
+        (s) => s.moduleType !== 'global',
+      ),
+    [project.content],
+  );
+
+  // Map screen.key -> local index within its module (1-based) for the M.N
+  // screen-ID display. ID stays stable across module reorders because it's
+  // derived from the current module list, not the screen kind.
+  const localIndex = useMemo(() => {
+    const out = new Map<string, number>();
+    let lastModuleId = '';
+    let cnt = 0;
+    for (const s of screens) {
+      if (s.moduleId !== lastModuleId) {
+        lastModuleId = s.moduleId;
+        cnt = 1;
+      } else {
+        cnt++;
+      }
+      out.set(s.key, cnt);
+    }
+    return out;
+  }, [screens]);
+
+  const [screenIdx, setScreenIdx] = useState(0);
+  const screen = screens[screenIdx];
+
+  if (!screen) {
+    return (
+      <Shell projectName={project.name}>
+        <Centered>
+          <p className="italic text-[var(--muted)]">
+            This project has no module screens yet.{' '}
+            <Link href="/create/formative" className="underline">
+              Add modules in the editor
+            </Link>
+            .
+          </p>
+        </Centered>
+      </Shell>
+    );
+  }
+
+  const moduleIdx = project.content.modules.findIndex(
+    (mod) => mod.id === screen.moduleId,
+  );
+  const m = project.content.modules[moduleIdx];
+  if (!m) {
+    return (
+      <Shell projectName={project.name}>
+        <Centered>
+          <p className="italic text-[var(--muted)]">
+            (Screen references a module that no longer exists — try jumping
+            to another screen.)
+          </p>
+        </Centered>
+      </Shell>
+    );
+  }
+
+  const screenId = `${screen.moduleNumber}.${localIndex.get(screen.key) ?? '?'}`;
+  // No persistence in preview — pass a null participantId so makeSaveAdapter
+  // returns a no-op adapter. Spec/entities still hit localStorage via
+  // useLocalString/useLocalEntities, which is the desired behavior because
+  // the researcher can type into the preview to feel out the participant flow.
+  const save = makeSaveAdapter(null, m.id, true);
+  const advance = () =>
+    setScreenIdx((i) => Math.min(screens.length - 1, i + 1));
+
+  return (
+    <Shell
+      projectName={project.name}
+      moduleLabel={MODULE_TYPE_LABEL[m.type]}
+      moduleNumber={moduleIdx + 1}
+      total={project.content.modules.length}
+      previewControls={
+        <PreviewControls
+          screens={screens}
+          screenIdx={screenIdx}
+          setScreenIdx={setScreenIdx}
+          screenId={screenId}
+          localIndex={localIndex}
+        />
+      }
+    >
+      {m.type === 'think_aloud_warmup' ? (
+        <ThinkAloudWarmupRunner
+          key={screen.key}
+          projectId={project.id}
+          module={m}
+          save={save}
+          onComplete={advance}
+          initialPhase={screenToWarmupPhase(screen)}
+          controlled
+          onAdvance={advance}
+        />
+      ) : m.type === 'task' || m.type === 'task_warmup' ? (
+        <TaskRunner
+          key={screen.key}
+          projectId={project.id}
+          participantId={null}
+          module={m}
+          moduleNumber={moduleIdx + 1}
+          total={project.content.modules.length}
+          isWarmup={m.type === 'task_warmup'}
+          save={save}
+          onComplete={advance}
+          initialStep={screenToTaskStep(screen)}
+          controlled
+          onAdvance={advance}
+        />
+      ) : m.type === 'retrospective_report' ? (
+        <RetrospectiveRunner
+          key={screen.key}
+          projectId={project.id}
+          project={project}
+          module={m}
+          save={save}
+          onComplete={advance}
+          initialStepIdx={screen.idx ?? 0}
+          controlled
+          onAdvance={advance}
+        />
+      ) : null}
+    </Shell>
+  );
+}
+
+function PreviewControls({
+  screens,
+  screenIdx,
+  setScreenIdx,
+  screenId,
+  localIndex,
+}: {
+  screens: Screen[];
+  screenIdx: number;
+  setScreenIdx: (next: number) => void;
+  screenId: string;
+  localIndex: Map<string, number>;
+}) {
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-xs font-mono tabular-nums text-[var(--accent)] border border-[var(--accent)]/40 px-2 py-1">
+        {screenId}
+      </span>
+      <select
+        value={screenIdx}
+        onChange={(e) => setScreenIdx(Number(e.target.value))}
+        className="border border-[var(--rule)] bg-white px-2 py-1 text-xs font-mono max-w-[20rem]"
+        title="Jump to any screen"
+      >
+        {screens.map((s, i) => (
+          <option key={s.key} value={i}>
+            {s.moduleNumber}.{localIndex.get(s.key)} — {s.label}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        onClick={() => setScreenIdx(Math.max(0, screenIdx - 1))}
+        disabled={screenIdx === 0}
+        className="border border-[var(--rule)] px-2 py-1 text-xs disabled:opacity-30"
+      >
+        ‹ Prev
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          setScreenIdx(Math.min(screens.length - 1, screenIdx + 1))
+        }
+        disabled={screenIdx === screens.length - 1}
+        className="border border-[var(--foreground)] px-2 py-1 text-xs disabled:opacity-30"
+      >
+        Next ›
+      </button>
+      <span className="text-xs text-[var(--muted)] tabular-nums">
+        {screenIdx + 1} / {screens.length}
+      </span>
+    </div>
+  );
+}
+
 // ============================== Shell / Header =============================
 
 function Shell({
@@ -307,6 +579,7 @@ function Shell({
   moduleNumber,
   total,
   showSignOut = false,
+  previewControls,
   children,
 }: {
   projectName: string;
@@ -314,21 +587,25 @@ function Shell({
   moduleNumber?: number;
   total?: number;
   showSignOut?: boolean;
+  previewControls?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="min-h-screen flex flex-col bg-[var(--background)] text-[var(--foreground)]">
-      <header className="sticky top-0 z-10 border-b border-[var(--rule)] bg-[var(--panel)] px-6 py-3 flex justify-between items-baseline">
-        <div className="flex items-baseline gap-3">
+      <header className="sticky top-0 z-10 border-b border-[var(--rule)] bg-[var(--panel)] px-6 py-3 flex justify-between items-center gap-4 flex-wrap">
+        <div className="flex items-baseline gap-3 min-w-0">
           <UtcClock />
-          <h1 className="text-lg font-medium tracking-tight">{projectName}</h1>
+          <h1 className="text-lg font-medium tracking-tight truncate">
+            {projectName}
+          </h1>
         </div>
-        <div className="flex items-baseline gap-4">
+        <div className="flex items-center gap-4 flex-wrap">
           {moduleLabel && moduleNumber && total && (
             <span className="text-xs uppercase tracking-wider text-[var(--muted)]">
               Module {moduleNumber} of {total} · {moduleLabel}
             </span>
           )}
+          {previewControls}
           {showSignOut && (
             <form action={participantLogoutAction}>
               <button
@@ -466,35 +743,83 @@ function ModuleRunner({
 
 // =========================== Think-aloud warmup =========================
 
+// Warmup phases — declared at module level so the preview wrapper can
+// translate screen.kind -> Phase without duplicating the union.
+type WarmupPhase =
+  | 'example_intro'
+  | 'example_body'
+  | 'example_revealed'
+  | 'intro'
+  | 'body'
+  | 'revealed';
+
 function ThinkAloudWarmupRunner({
+  projectId,
   module: m,
   save,
   onComplete,
+  initialPhase,
+  controlled = false,
+  onAdvance,
 }: {
   projectId: string;
   module: ThinkAloudWarmupModule;
   save: SaveAdapter;
   onComplete: () => void;
+  // Preview-mode hooks: when `controlled` is true the runner emits
+  // onAdvance() instead of mutating internal phase state; the wrapper
+  // re-mounts on screen change via React key to set the new initialPhase.
+  initialPhase?: WarmupPhase;
+  controlled?: boolean;
+  onAdvance?: () => void;
 }) {
+  // Resolve overridable copy with fallback to defaults. Every render reads
+  // through `copy.*` — never read DEFAULT_WARMUP_COPY directly downstream.
+  const copy = {
+    introTitle: m.copy?.introTitle?.trim() || DEFAULT_WARMUP_COPY.introTitle,
+    introBody: m.copy?.introBody?.trim() || DEFAULT_WARMUP_COPY.introBody,
+    revealButtonLabel:
+      m.copy?.revealButtonLabel?.trim() || DEFAULT_WARMUP_COPY.revealButtonLabel,
+    postRevealCallout:
+      m.copy?.postRevealCallout?.trim() || DEFAULT_WARMUP_COPY.postRevealCallout,
+    answerInputLabel:
+      m.copy?.answerInputLabel?.trim() || DEFAULT_WARMUP_COPY.answerInputLabel,
+  };
+  // Participant's typed anagram answer, persisted locally so reload doesn't
+  // erase. Compared to m.revealedAnswer for analysis logging; not gating.
+  const [answer, setAnswer] = useLocalString(
+    `pf:${projectId}:${m.id}:warmup_answer`,
+  );
+  useDebouncedSave(answer, (v) => {
+    save.upsert('warmup:answer', v);
+    save.recordEvent('warmup_answer_edit', {
+      value: v,
+      target: m.revealedAnswer,
+      client_ts: new Date().toISOString(),
+    });
+  });
   // Example phases come first when authored; then the real 3-phase flow.
-  type Phase =
-    | 'example_intro'
-    | 'example_body'
-    | 'example_revealed'
-    | 'intro'
-    | 'body'
-    | 'revealed';
-  const initial: Phase = m.example ? 'example_intro' : 'intro';
+  type Phase = WarmupPhase;
+  const initial: Phase =
+    initialPhase ?? (m.example ? 'example_intro' : 'intro');
   const [phase, setPhase] = useState<Phase>(initial);
 
   function advanceTo(next: Phase) {
     save.recordEvent('step_advance', { from: phase, to: next });
-    setPhase(next);
+    if (controlled) {
+      onAdvance?.();
+    } else {
+      setPhase(next);
+    }
   }
 
   function finish() {
     save.recordEvent('step_advance', { from: phase, to: 'done' });
-    onComplete();
+    if (controlled) {
+      onAdvance?.();
+    } else {
+      onComplete();
+    }
   }
 
   // ============ Example phases ============
@@ -504,7 +829,7 @@ function ThinkAloudWarmupRunner({
         <ExampleBanner />
         <Centered>
           <h2 className="text-2xl font-medium tracking-tight mb-4">
-            Think-Aloud Instructions
+            {copy.introTitle}
           </h2>
           <p className="text-[var(--muted)] leading-relaxed mb-8">
             The researcher will demonstrate the think-aloud method.
@@ -581,10 +906,10 @@ function ThinkAloudWarmupRunner({
     return (
       <Centered>
         <h2 className="text-2xl font-medium tracking-tight mb-4">
-          Think-Aloud Instructions
+          {copy.introTitle}
         </h2>
-        <p className="text-[var(--muted)] leading-relaxed mb-8">
-          Please do not move on until directed by the researcher.
+        <p className="text-[var(--muted)] leading-relaxed mb-8 whitespace-pre-wrap">
+          {copy.introBody}
         </p>
         <ContinueButton onClick={() => advanceTo('body')} />
       </Centered>
@@ -606,17 +931,31 @@ function ThinkAloudWarmupRunner({
           )}
           {phase === 'revealed' && m.revealedTask && (
             <div className="mt-2 border border-[var(--rule)] bg-[var(--rule-soft)] px-4 py-6 text-center">
-              <p className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-2">
+              <p className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-3">
                 Task
               </p>
-              <p className="font-mono text-3xl tracking-[0.4em]">
+              <p className="font-mono text-3xl tracking-[0.4em] mb-5">
                 {m.revealedTask}
               </p>
+              <label className="block text-left max-w-xs mx-auto">
+                <span className="block text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-1">
+                  {copy.answerInputLabel}
+                </span>
+                <input
+                  type="text"
+                  value={answer}
+                  onChange={(e) => setAnswer(e.target.value)}
+                  autoFocus
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="w-full border border-[var(--rule)] bg-white px-3 py-2 font-mono tracking-[0.25em] text-center text-lg focus:outline-none focus:border-[var(--accent)]"
+                />
+              </label>
             </div>
           )}
           {phase === 'revealed' && (
             <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
-              Remember to think aloud while you solve this.
+              {copy.postRevealCallout}
             </p>
           )}
           {m.mandatory && phase === 'body' && (
@@ -631,7 +970,7 @@ function ThinkAloudWarmupRunner({
                 onClick={() => advanceTo('revealed')}
                 className="border border-[var(--foreground)] px-4 py-2 hover:bg-[var(--foreground)] hover:text-[var(--background)] transition"
               >
-                Reveal Task
+                {copy.revealButtonLabel}
               </button>
             )}
             {phase === 'revealed' && <ContinueButton onClick={finish} />}
@@ -679,6 +1018,9 @@ function TaskRunner({
   isWarmup,
   save,
   onComplete,
+  initialStep,
+  controlled = false,
+  onAdvance,
 }: {
   projectId: string;
   participantId: string | null;
@@ -688,12 +1030,16 @@ function TaskRunner({
   isWarmup: boolean;
   save: SaveAdapter;
   onComplete: () => void;
+  // Preview-mode hooks: see ThinkAloudWarmupRunner for semantics.
+  initialStep?: TaskStep;
+  controlled?: boolean;
+  onAdvance?: () => void;
 }) {
   const t: TaskContent = m;
   const example: TaskExample | undefined =
     m.type === 'task_warmup' ? m.example : undefined;
 
-  const [step, setStep] = useState<TaskStep>({ kind: 'intro' });
+  const [step, setStep] = useState<TaskStep>(initialStep ?? { kind: 'intro' });
   const [spec, setSpec] = useLocalString(`pf:${projectId}:${m.id}:spec`);
   const [entities, setEntities] = useLocalEntities(
     `pf:${projectId}:${m.id}:entities`,
@@ -727,7 +1073,11 @@ function TaskRunner({
       from: stepLabel(step),
       to: stepLabel(nextStep),
     });
-    setStep(nextStep);
+    if (controlled) {
+      onAdvance?.();
+    } else {
+      setStep(nextStep);
+    }
   }
 
   function next(): void {
@@ -794,6 +1144,7 @@ function TaskRunner({
           entitiesJson,
           skipPersist: isWarmup,
         });
+        if (controlled) return onAdvance?.();
         return onComplete();
       }
       return transitionTo({ kind: 'scenario_read', idx: nextIdx });
@@ -807,6 +1158,7 @@ function TaskRunner({
         total={total}
         isWarmup={isWarmup}
         title={t.title}
+        copy={t.copy}
         onContinue={next}
       />
     );
@@ -879,6 +1231,7 @@ function TaskRunner({
       <PonderStep
         scenarioIdx={step.idx}
         totalScenarios={example?.scenarios.length ?? 0}
+        taskCopy={t.copy}
         onContinue={next}
         isExample
         copyOverride={perScenario?.ponderCopy}
@@ -938,6 +1291,7 @@ function TaskRunner({
       <PonderStep
         scenarioIdx={step.idx}
         totalScenarios={t.scenarios.length}
+        taskCopy={t.copy}
         onContinue={next}
       />
     );
@@ -975,14 +1329,19 @@ function TaskIntro({
   total,
   isWarmup,
   title,
+  copy,
   onContinue,
 }: {
   moduleNumber: number;
   total: number;
   isWarmup: boolean;
   title: string;
+  copy: TaskContent['copy'];
   onContinue: () => void;
 }) {
+  const annotation = isWarmup
+    ? copy?.warmupAnnotation?.trim() || DEFAULT_TASK_COPY.warmupAnnotation
+    : copy?.realAnnotation?.trim() || DEFAULT_TASK_COPY.realAnnotation;
   return (
     <Centered>
       <div className="space-y-6">
@@ -992,15 +1351,13 @@ function TaskIntro({
         <h2 className="text-3xl font-medium tracking-tight">{title}</h2>
         <p
           className={
-            'text-sm italic px-4 py-3 ' +
+            'text-sm italic px-4 py-3 whitespace-pre-wrap ' +
             (isWarmup
               ? 'text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a]'
               : 'text-[var(--muted)] bg-[var(--panel)] border border-[var(--rule)]')
           }
         >
-          {isWarmup
-            ? 'This is a warmup task. Your responses are not saved or analyzed; they are practice only.'
-            : 'Your responses for this task will be saved and included in the study analysis.'}
+          {annotation}
         </p>
         <ContinueButton onClick={onContinue} />
       </div>
@@ -1051,28 +1408,32 @@ function InitialSpecStep({
   entitiesSavedAt: string | null;
   onContinue: () => void;
 }) {
+  // No-scenario screen → side padding for breathing room, requirements 1/3
+  // on the left, spec 2/3 on the right (Hudson's pilot-2 ratio).
   return (
-    <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
-      <Panel defaultSize={50} minSize={30} maxSize={70}>
-        <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
-          <h2 className="text-2xl font-medium tracking-tight">{t.title}</h2>
-          <RequirementsBlock requirements={t.requirements} />
-        </section>
-      </Panel>
-      <SplitHandle />
-      <Panel defaultSize={50} minSize={30} maxSize={70}>
-        <SpecColumn
-          spec={spec}
-          setSpec={setSpec}
-          entities={entities}
-          setEntities={setEntities}
-          specSavedAt={specSavedAt}
-          entitiesSavedAt={entitiesSavedAt}
-          onContinue={onContinue}
-          continueLabel="Next"
-        />
-      </Panel>
-    </PanelGroup>
+    <div className="flex-1 min-h-0 px-6 md:px-10">
+      <PanelGroup orientation="horizontal" className="h-full">
+        <Panel defaultSize={33} minSize={20} maxSize={50}>
+          <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
+            <h2 className="text-2xl font-medium tracking-tight">{t.title}</h2>
+            <RequirementsBlock requirements={t.requirements} />
+          </section>
+        </Panel>
+        <SplitHandle />
+        <Panel defaultSize={67} minSize={50} maxSize={80}>
+          <SpecColumn
+            spec={spec}
+            setSpec={setSpec}
+            entities={entities}
+            setEntities={setEntities}
+            specSavedAt={specSavedAt}
+            entitiesSavedAt={entitiesSavedAt}
+            onContinue={onContinue}
+            continueLabel="Next"
+          />
+        </Panel>
+      </PanelGroup>
+    </div>
   );
 }
 
@@ -1169,18 +1530,24 @@ function ScenarioReadStep({
 function PonderStep({
   scenarioIdx,
   totalScenarios,
+  taskCopy,
   onContinue,
   isExample = false,
   copyOverride,
 }: {
   scenarioIdx: number;
   totalScenarios: number;
+  taskCopy: TaskContent['copy'];
   onContinue: () => void;
   isExample?: boolean;
   copyOverride?: string;
 }) {
   const trimmed = copyOverride?.trim();
   const showOverride = isExample && trimmed && trimmed.length > 0;
+  const ponderText =
+    taskCopy?.ponderDefault?.trim() || DEFAULT_TASK_COPY.ponderDefault;
+  const holdNote =
+    taskCopy?.ponderHoldNote?.trim() || DEFAULT_TASK_COPY.ponderHoldNote;
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {isExample && <ExampleBanner />}
@@ -1190,9 +1557,7 @@ function PonderStep({
             Scenario {scenarioIdx + 1} of {totalScenarios} · Pause and ponder
           </p>
           <p className="text-2xl leading-relaxed whitespace-pre-wrap">
-            {showOverride
-              ? trimmed
-              : 'Can you tell me everything you remember, or were thinking about, when you analyzed the last scenario?'}
+            {showOverride ? trimmed : ponderText}
           </p>
           {isExample && !showOverride && (
             <p className="text-xs italic text-[var(--muted)]">
@@ -1200,7 +1565,7 @@ function PonderStep({
             </p>
           )}
           <p className="text-sm italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-4 py-3">
-            Please do not click Continue until your researcher tells you to.
+            {holdNote}
           </p>
           <ContinueButton onClick={onContinue} />
         </div>
@@ -1298,8 +1663,7 @@ function ScenarioReviseStep({
           continueLabel={isLast ? 'Finish task' : 'Next scenario'}
           leadIn={
             <div className="bg-[#fffbea] border border-[#d8c98a] px-3 py-2 text-sm italic text-[#7c5a2e]">
-              Your specifications are <strong>editable</strong>. Continue
-              thinking aloud as you revise them.
+              {t.copy?.reviseCallout?.trim() || DEFAULT_TASK_COPY.reviseCallout}
             </div>
           }
         />
@@ -1344,30 +1708,32 @@ function ExampleInitialSpecStep({
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <ExampleBanner />
-      <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
-        <Panel defaultSize={50} minSize={30} maxSize={70}>
-          <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
-            <h2 className="text-2xl font-medium tracking-tight">
-              {example.title}
-            </h2>
-            <RequirementsBlock requirements={example.requirements} />
-          </section>
-        </Panel>
-        <SplitHandle />
-        <Panel defaultSize={50} minSize={30} maxSize={70}>
-          <SpecColumn
-            spec={moment.spec}
-            setSpec={() => {}}
-            entities={moment.entities}
-            setEntities={() => {}}
-            specSavedAt={null}
-            entitiesSavedAt={null}
-            onContinue={onContinue}
-            continueLabel="Next"
-            readOnly
-          />
-        </Panel>
-      </PanelGroup>
+      <div className="flex-1 min-h-0 px-6 md:px-10">
+        <PanelGroup orientation="horizontal" className="h-full">
+          <Panel defaultSize={33} minSize={20} maxSize={50}>
+            <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
+              <h2 className="text-2xl font-medium tracking-tight">
+                {example.title}
+              </h2>
+              <RequirementsBlock requirements={example.requirements} />
+            </section>
+          </Panel>
+          <SplitHandle />
+          <Panel defaultSize={67} minSize={50} maxSize={80}>
+            <SpecColumn
+              spec={moment.spec}
+              setSpec={() => {}}
+              entities={moment.entities}
+              setEntities={() => {}}
+              specSavedAt={null}
+              entitiesSavedAt={null}
+              onContinue={onContinue}
+              continueLabel="Next"
+              readOnly
+            />
+          </Panel>
+        </PanelGroup>
+      </div>
     </div>
   );
 }
@@ -1515,14 +1881,21 @@ function RetrospectiveRunner({
   module: m,
   save,
   onComplete,
+  initialStepIdx,
+  controlled = false,
+  onAdvance,
 }: {
   projectId: string;
   project: LoadedProject;
   module: RetrospectiveReportModule;
   save: SaveAdapter;
   onComplete: () => void;
+  // Preview-mode hooks: see ThinkAloudWarmupRunner for semantics.
+  initialStepIdx?: number;
+  controlled?: boolean;
+  onAdvance?: () => void;
 }) {
-  const [stepIdx, setStepIdx] = useState(0);
+  const [stepIdx, setStepIdx] = useState(initialStepIdx ?? 0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [hydrated, setHydrated] = useState(false);
   const key = `pf:${projectId}:${m.id}:answers`;
@@ -1626,13 +1999,15 @@ function RetrospectiveRunner({
   function advance() {
     if (stepIdx === total - 1) {
       save.recordEvent('retro_submit', { answers });
-      onComplete();
+      if (controlled) onAdvance?.();
+      else onComplete();
     } else {
       save.recordEvent('step_advance', {
         from: `retro_${stepIdx}`,
         to: `retro_${stepIdx + 1}`,
       });
-      setStepIdx((i) => i + 1);
+      if (controlled) onAdvance?.();
+      else setStepIdx((i) => i + 1);
     }
   }
 
@@ -1703,9 +2078,10 @@ function RetrospectiveRunner({
 
 // ========================= Shared sub-components ========================
 
-// Spec column = SPEC_PLACEHOLDER caption + spec textarea + entity table +
-// continue button. Used on initial-spec, scenario-read, scenario-revise,
-// and the read-only retrospective view. readOnly disables every input.
+// Spec column = a single white pad containing the entity/element table on
+// top, an ASCII divider, then the free-form spec textarea. The pad has a
+// single bg-white container so the visual reads as one continuous
+// "specification surface". readOnly turns every input non-interactive.
 function SpecColumn({
   spec,
   setSpec,
@@ -1731,6 +2107,7 @@ function SpecColumn({
   leadIn?: React.ReactNode;
   headerNote?: string;
 }) {
+  const padBg = readOnly ? 'bg-[var(--rule-soft)]' : 'bg-white';
   return (
     <section className="h-full flex flex-col gap-2 overflow-y-auto min-h-0 pl-3">
       {leadIn}
@@ -1740,24 +2117,35 @@ function SpecColumn({
         </PanelLabel>
         <SavedHint at={specSavedAt} />
       </div>
-      <p className="text-xs italic text-[var(--muted)] leading-relaxed">
-        {SPEC_PLACEHOLDER}
-      </p>
-      <textarea
-        value={spec}
-        onChange={(e) => !readOnly && setSpec(e.target.value)}
-        readOnly={readOnly}
-        className={
-          'border border-[var(--rule)] p-3 text-[15px] leading-relaxed resize-y focus:outline-none focus:border-[var(--accent)] font-mono min-h-[14rem] ' +
-          (readOnly ? 'bg-[var(--rule-soft)] cursor-default' : 'bg-white')
-        }
-      />
-      <EntityElementEditor
-        value={entities}
-        onChange={setEntities}
-        readOnly={readOnly}
-        savedAt={entitiesSavedAt}
-      />
+      <div className={'border border-[var(--rule)] ' + padBg + ' p-3 flex flex-col gap-2'}>
+        <div className="flex justify-between items-baseline">
+          <PanelLabel>Entities &amp; Elements</PanelLabel>
+          <SavedHint at={entitiesSavedAt} />
+        </div>
+        <EntityElementGrid
+          value={entities}
+          onChange={setEntities}
+          readOnly={readOnly}
+        />
+        <p
+          className="font-mono text-[10px] tracking-tighter text-[var(--muted)] select-none leading-none my-2"
+          aria-hidden
+        >
+          ================================================
+        </p>
+        <p className="text-xs italic text-[var(--muted)] leading-relaxed">
+          {SPEC_PLACEHOLDER}
+        </p>
+        <textarea
+          value={spec}
+          onChange={(e) => !readOnly && setSpec(e.target.value)}
+          readOnly={readOnly}
+          className={
+            'border-0 p-0 text-[15px] leading-relaxed resize-y focus:outline-none font-mono min-h-[14rem] w-full bg-transparent ' +
+            (readOnly ? 'cursor-default' : '')
+          }
+        />
+      </div>
       {onContinue && (
         <div className="pt-2">
           <ContinueButton onClick={onContinue} label={continueLabel} />
@@ -1767,19 +2155,17 @@ function SpecColumn({
   );
 }
 
-// ENTITIES & ELEMENTS — a small 1:m editor framed by literal divider rows
-// so it visually attaches to the spec textarea above. Inputs are inline; +
-// element / + entity buttons add fresh rows. readOnly disables every input.
-function EntityElementEditor({
+// ENTITIES & ELEMENTS — 1:m editor rendered as a 3-column grid of cards.
+// On overflow rows wrap; the "+ entity" tile sits as the final card so it
+// rides the grid rhythm. readOnly disables every input + the add tile.
+function EntityElementGrid({
   value,
   onChange,
   readOnly = false,
-  savedAt = null,
 }: {
   value: Entity[];
   onChange: (next: Entity[]) => void;
   readOnly?: boolean;
-  savedAt?: string | null;
 }) {
   function addEntity() {
     onChange([...value, { id: uid(), name: '', elements: [] }]);
@@ -1816,109 +2202,92 @@ function EntityElementEditor({
     onChange(next);
   }
 
-  const dividerCls =
-    'font-mono text-[10px] tracking-tighter text-[var(--muted)] select-none leading-none';
+  if (readOnly && value.length === 0) {
+    return (
+      <p className="text-xs italic text-[var(--muted)]">
+        (no entities recorded)
+      </p>
+    );
+  }
 
   return (
-    <div className="mt-2 flex flex-col gap-1">
-      <p className={dividerCls}>================================================</p>
-      <div className="flex justify-between items-baseline">
-        <PanelLabel>Entities &amp; Elements</PanelLabel>
-        <SavedHint at={savedAt} />
-      </div>
-      <div
-        className={
-          'border border-dashed border-[var(--rule)] p-2 space-y-2 ' +
-          (readOnly ? 'bg-[var(--rule-soft)]' : 'bg-white')
-        }
-      >
-        {value.length === 0 && (
-          <p className="text-xs italic text-[var(--muted)]">
-            {readOnly
-              ? '(no entities recorded)'
-              : 'No entities yet — add one below.'}
-          </p>
-        )}
-        {value.map((ent, i) => (
-          <div key={ent.id} className="border border-[var(--rule)] p-2">
-            <div className="flex gap-2 items-center">
-              <input
-                value={ent.name}
-                onChange={(e) => updateEntity(i, { name: e.target.value })}
-                readOnly={readOnly}
-                placeholder="Entity name"
-                className={
-                  'flex-1 border-0 border-b border-dashed border-[var(--rule)] py-1 bg-transparent text-sm focus:outline-none focus:border-[var(--accent)] ' +
-                  (readOnly ? 'cursor-default' : '')
-                }
-              />
-              {!readOnly && (
-                <>
+    <div className="grid grid-cols-3 gap-2">
+      {value.map((ent, i) => (
+        <div
+          key={ent.id}
+          className="border border-[var(--rule)] p-2 flex flex-col gap-1 bg-[var(--background)]"
+        >
+          <div className="flex gap-1 items-center">
+            <input
+              value={ent.name}
+              onChange={(e) => updateEntity(i, { name: e.target.value })}
+              readOnly={readOnly}
+              placeholder="Entity"
+              className={
+                'flex-1 min-w-0 border-0 border-b border-dashed border-[var(--rule)] py-1 bg-transparent text-sm focus:outline-none focus:border-[var(--accent)] ' +
+                (readOnly ? 'cursor-default' : '')
+              }
+            />
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={() => removeEntity(i)}
+                className="text-[11px] text-[var(--muted)] hover:text-[var(--danger)] shrink-0"
+                aria-label="Remove entity"
+              >
+                ×
+              </button>
+            )}
+          </div>
+          <ul className="space-y-0.5">
+            {ent.elements.map((el, ei) => (
+              <li key={el.id} className="flex gap-1 items-center text-sm">
+                <span className="text-[var(--muted)] shrink-0">·</span>
+                <input
+                  value={el.name}
+                  onChange={(e) =>
+                    updateElement(i, ei, { name: e.target.value })
+                  }
+                  readOnly={readOnly}
+                  placeholder="element"
+                  className={
+                    'flex-1 min-w-0 border-0 border-b border-dashed border-[var(--rule)] py-0.5 bg-transparent text-sm focus:outline-none focus:border-[var(--accent)] ' +
+                    (readOnly ? 'cursor-default' : '')
+                  }
+                />
+                {!readOnly && (
                   <button
                     type="button"
-                    onClick={() => addElement(i)}
-                    className="text-[11px] italic text-[var(--muted)] hover:text-[var(--foreground)] border border-dashed border-[var(--rule)] px-2 py-0.5"
-                  >
-                    + element
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeEntity(i)}
-                    className="text-[11px] text-[var(--muted)] hover:text-[var(--danger)]"
-                    aria-label="Remove entity"
+                    onClick={() => removeElement(i, ei)}
+                    className="text-[10px] text-[var(--muted)] hover:text-[var(--danger)] shrink-0"
+                    aria-label="Remove element"
                   >
                     ×
                   </button>
-                </>
-              )}
-            </div>
-            <ul className="mt-2 pl-3 space-y-1">
-              {ent.elements.length === 0 && (
-                <li className="text-[11px] italic text-[var(--muted)]">
-                  (no elements)
-                </li>
-              )}
-              {ent.elements.map((el, ei) => (
-                <li key={el.id} className="flex gap-2 items-center text-sm">
-                  <span className="text-[var(--muted)]">•</span>
-                  <input
-                    value={el.name}
-                    onChange={(e) =>
-                      updateElement(i, ei, { name: e.target.value })
-                    }
-                    readOnly={readOnly}
-                    placeholder="Element name"
-                    className={
-                      'flex-1 border-0 border-b border-dashed border-[var(--rule)] py-0.5 bg-transparent focus:outline-none focus:border-[var(--accent)] ' +
-                      (readOnly ? 'cursor-default' : '')
-                    }
-                  />
-                  {!readOnly && (
-                    <button
-                      type="button"
-                      onClick={() => removeElement(i, ei)}
-                      className="text-[11px] text-[var(--muted)] hover:text-[var(--danger)]"
-                      aria-label="Remove element"
-                    >
-                      ×
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-        {!readOnly && (
-          <button
-            type="button"
-            onClick={addEntity}
-            className="text-xs italic text-[var(--muted)] hover:text-[var(--foreground)] border border-dashed border-[var(--rule)] px-3 py-1"
-          >
-            + entity
-          </button>
-        )}
-      </div>
-      <p className={dividerCls}>================================================</p>
+                )}
+              </li>
+            ))}
+          </ul>
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={() => addElement(i)}
+              className="text-[11px] italic text-[var(--muted)] hover:text-[var(--foreground)] border border-dashed border-[var(--rule)] px-2 py-0.5 self-start mt-1"
+            >
+              + element
+            </button>
+          )}
+        </div>
+      ))}
+      {!readOnly && (
+        <button
+          type="button"
+          onClick={addEntity}
+          className="border border-dashed border-[var(--rule)] p-2 text-xs italic text-[var(--muted)] hover:text-[var(--foreground)] hover:border-[var(--foreground)] flex items-center justify-center min-h-[3rem]"
+        >
+          + entity
+        </button>
+      )}
     </div>
   );
 }

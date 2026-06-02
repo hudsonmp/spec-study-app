@@ -31,15 +31,16 @@ export function migrateContent(input: unknown): ProjectContent {
   // New shape: { modules: [...] }
   if (Array.isArray(obj.modules)) {
     const modules = (obj.modules as Module[]).map((m) => {
-      if (
-        m.type === 'think_aloud_warmup' &&
-        typeof (m as ThinkAloudWarmupModule).revealedTask !== 'string'
-      ) {
-        return { ...m, revealedTask: '' } as Module;
+      if (m.type === 'think_aloud_warmup') {
+        const w = m as ThinkAloudWarmupModule;
+        const patched: ThinkAloudWarmupModule = { ...w };
+        if (typeof w.revealedTask !== 'string') patched.revealedTask = '';
+        if (typeof w.revealedAnswer !== 'string') patched.revealedAnswer = '';
+        return patched as Module;
       }
+      // copy slot on TaskContent is fully optional; no backfill needed.
       // example is optional on think_aloud_warmup and task_warmup; back-compat
-      // is automatic — older payloads simply lack the field. No-op kept here
-      // as a hook for future shape evolutions.
+      // is automatic — older payloads simply lack the field.
       return m;
     });
     return { modules };

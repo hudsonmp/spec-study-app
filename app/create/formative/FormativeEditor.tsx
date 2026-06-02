@@ -13,7 +13,9 @@ import type {
   ProjectContent,
   Module,
   TaskContent,
+  TaskCopy,
   ThinkAloudWarmupModule,
+  ThinkAloudWarmupCopy,
   ThinkAloudExample,
   TaskExample,
   TaskExamplePrefilled,
@@ -41,6 +43,8 @@ import {
   VEHICLE_COLOR_TO_NUMBER,
   VEHICLE_HEX,
   PERSON_PALETTE,
+  DEFAULT_WARMUP_COPY,
+  DEFAULT_TASK_COPY,
 } from '@/lib/types/study';
 import {
   contentReducer,
@@ -474,29 +478,50 @@ function ThinkAloudWarmupEditor({
           onChange={(e) => p((w) => (w.title = e.target.value))}
         />
       </FieldLabel>
-      <FieldLabel label="Task description (what the participant is asked to do)">
+      <FieldLabel
+        label="Task description (what the participant is asked to do)"
+        onClear={() => p((w) => (w.taskDescription = ''))}
+        clearDisabled={!m.taskDescription}
+      >
         <textarea
           className={inputCls + ' min-h-[60px]'}
           value={m.taskDescription}
           onChange={(e) => p((w) => (w.taskDescription = e.target.value))}
+          placeholder="Empty — participant sees nothing here"
         />
       </FieldLabel>
-      <FieldLabel label="Warmup body (the actual prompt or scenario)">
+      <FieldLabel
+        label="Warmup body (the actual prompt or scenario)"
+        onClear={() => p((w) => (w.body = ''))}
+        clearDisabled={!m.body}
+      >
         <textarea
           className={inputCls + ' min-h-[120px]'}
           value={m.body}
           onChange={(e) => p((w) => (w.body = e.target.value))}
+          placeholder="Empty — participant sees nothing here. Leave empty when delivered verbally."
         />
       </FieldLabel>
-      <FieldLabel label="Revealed task (shown after the participant clicks Reveal Task)">
-        <input
-          type="text"
-          className={inputCls + ' font-mono tracking-widest'}
-          value={m.revealedTask}
-          onChange={(e) => p((w) => (w.revealedTask = e.target.value))}
-          placeholder="e.g. NPEPHA"
-        />
-      </FieldLabel>
+      <div className="grid grid-cols-2 gap-3">
+        <FieldLabel label="Scrambled word (what the participant sees)">
+          <input
+            type="text"
+            className={inputCls + ' font-mono tracking-widest'}
+            value={m.revealedTask}
+            onChange={(e) => p((w) => (w.revealedTask = e.target.value))}
+            placeholder="e.g. DUYTS"
+          />
+        </FieldLabel>
+        <FieldLabel label="Answer (researcher key, not shown)">
+          <input
+            type="text"
+            className={inputCls + ' font-mono tracking-widest'}
+            value={m.revealedAnswer}
+            onChange={(e) => p((w) => (w.revealedAnswer = e.target.value))}
+            placeholder="e.g. STUDY"
+          />
+        </FieldLabel>
+      </div>
       <div className="flex gap-6 text-sm">
         <label className="flex gap-2 items-center text-[var(--muted)]">
           <input
@@ -507,6 +532,7 @@ function ThinkAloudWarmupEditor({
           <span>Mandatory (participant must complete)</span>
         </label>
       </div>
+      <WarmupCopyEditor copy={m.copy} setCopy={(c) => p((w) => (w.copy = c))} />
       <details className="mt-4 border border-dashed border-[var(--rule)] p-3">
         <summary className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] cursor-pointer">
           Example demo {m.example ? '(authored)' : '(none)'}
@@ -528,6 +554,176 @@ function ThinkAloudWarmupEditor({
         )}
       </details>
     </div>
+  );
+}
+
+// ===================== Copy customization editors =====================
+// Lets the researcher override participant-facing strings per-module. All
+// fields are optional; empty strings fall back to DEFAULT_*_COPY at render
+// time. Reusable across studies because copy lives on the module, not in
+// the participant runner.
+
+function CopyOverrideField({
+  label,
+  value,
+  defaultValue,
+  onChange,
+  multiline = false,
+}: {
+  label: string;
+  value: string | undefined;
+  defaultValue: string;
+  onChange: (next: string | undefined) => void;
+  multiline?: boolean;
+}) {
+  // Treat empty string as "not overridden" — emit undefined so the JSON stays
+  // small and the renderer's `?? DEFAULT` works without a length check.
+  function emit(next: string) {
+    onChange(next.length === 0 ? undefined : next);
+  }
+  return (
+    <FieldLabel label={label}>
+      {multiline ? (
+        <textarea
+          className={inputCls + ' min-h-[60px]'}
+          value={value ?? ''}
+          onChange={(e) => emit(e.target.value)}
+          placeholder={defaultValue}
+        />
+      ) : (
+        <input
+          type="text"
+          className={inputCls}
+          value={value ?? ''}
+          onChange={(e) => emit(e.target.value)}
+          placeholder={defaultValue}
+        />
+      )}
+    </FieldLabel>
+  );
+}
+
+function WarmupCopyEditor({
+  copy,
+  setCopy,
+}: {
+  copy: ThinkAloudWarmupCopy | undefined;
+  setCopy: (c: ThinkAloudWarmupCopy | undefined) => void;
+}) {
+  function set<K extends keyof ThinkAloudWarmupCopy>(
+    key: K,
+    value: ThinkAloudWarmupCopy[K],
+  ) {
+    const next: ThinkAloudWarmupCopy = { ...(copy ?? {}), [key]: value };
+    // Strip all-empty wrapper → store undefined so saved JSON stays clean.
+    const hasAny = Object.values(next).some(
+      (v) => v !== undefined && v !== '',
+    );
+    setCopy(hasAny ? next : undefined);
+  }
+  return (
+    <details className="border border-dashed border-[var(--rule)] p-3">
+      <summary className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] cursor-pointer">
+        Customize on-screen copy {copy ? '(overridden)' : '(defaults)'}
+      </summary>
+      <p className="text-xs italic text-[var(--muted)] mt-2 mb-3">
+        Leave any field blank to fall back to the default shown as placeholder.
+      </p>
+      <div className="space-y-3">
+        <CopyOverrideField
+          label="Intro screen — title"
+          value={copy?.introTitle}
+          defaultValue={DEFAULT_WARMUP_COPY.introTitle}
+          onChange={(v) => set('introTitle', v)}
+        />
+        <CopyOverrideField
+          label="Intro screen — body"
+          value={copy?.introBody}
+          defaultValue={DEFAULT_WARMUP_COPY.introBody}
+          onChange={(v) => set('introBody', v)}
+          multiline
+        />
+        <CopyOverrideField
+          label="Reveal button label"
+          value={copy?.revealButtonLabel}
+          defaultValue={DEFAULT_WARMUP_COPY.revealButtonLabel}
+          onChange={(v) => set('revealButtonLabel', v)}
+        />
+        <CopyOverrideField
+          label="Post-reveal callout"
+          value={copy?.postRevealCallout}
+          defaultValue={DEFAULT_WARMUP_COPY.postRevealCallout}
+          onChange={(v) => set('postRevealCallout', v)}
+        />
+        <CopyOverrideField
+          label="Answer-box label"
+          value={copy?.answerInputLabel}
+          defaultValue={DEFAULT_WARMUP_COPY.answerInputLabel}
+          onChange={(v) => set('answerInputLabel', v)}
+        />
+      </div>
+    </details>
+  );
+}
+
+function TaskCopyEditor({
+  copy,
+  setCopy,
+}: {
+  copy: TaskCopy | undefined;
+  setCopy: (c: TaskCopy | undefined) => void;
+}) {
+  function set<K extends keyof TaskCopy>(key: K, value: TaskCopy[K]) {
+    const next: TaskCopy = { ...(copy ?? {}), [key]: value };
+    const hasAny = Object.values(next).some(
+      (v) => v !== undefined && v !== '',
+    );
+    setCopy(hasAny ? next : undefined);
+  }
+  return (
+    <details className="border border-dashed border-[var(--rule)] p-3">
+      <summary className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] cursor-pointer">
+        Customize on-screen copy {copy ? '(overridden)' : '(defaults)'}
+      </summary>
+      <p className="text-xs italic text-[var(--muted)] mt-2 mb-3">
+        Leave any field blank to fall back to the default shown as placeholder.
+      </p>
+      <div className="space-y-3">
+        <CopyOverrideField
+          label="Pause-and-ponder default prompt"
+          value={copy?.ponderDefault}
+          defaultValue={DEFAULT_TASK_COPY.ponderDefault}
+          onChange={(v) => set('ponderDefault', v)}
+          multiline
+        />
+        <CopyOverrideField
+          label="Pause-and-ponder hold note"
+          value={copy?.ponderHoldNote}
+          defaultValue={DEFAULT_TASK_COPY.ponderHoldNote}
+          onChange={(v) => set('ponderHoldNote', v)}
+        />
+        <CopyOverrideField
+          label="Revise scenario callout"
+          value={copy?.reviseCallout}
+          defaultValue={DEFAULT_TASK_COPY.reviseCallout}
+          onChange={(v) => set('reviseCallout', v)}
+        />
+        <CopyOverrideField
+          label="Warmup intro annotation"
+          value={copy?.warmupAnnotation}
+          defaultValue={DEFAULT_TASK_COPY.warmupAnnotation}
+          onChange={(v) => set('warmupAnnotation', v)}
+          multiline
+        />
+        <CopyOverrideField
+          label="Real-task intro annotation"
+          value={copy?.realAnnotation}
+          defaultValue={DEFAULT_TASK_COPY.realAnnotation}
+          onChange={(v) => set('realAnnotation', v)}
+          multiline
+        />
+      </div>
+    </details>
   );
 }
 
@@ -628,11 +824,16 @@ function TaskEditor({
         />
       </FieldLabel>
 
-      <FieldLabel label="Study context">
+      <FieldLabel
+        label="Study context"
+        onClear={() => p((t) => (t.studyContext = ''))}
+        clearDisabled={!m.studyContext}
+      >
         <textarea
           className={inputCls + ' min-h-[80px]'}
           value={m.studyContext}
           onChange={(e) => p((t) => (t.studyContext = e.target.value))}
+          placeholder="Empty — participant sees no context section"
         />
       </FieldLabel>
 
@@ -655,6 +856,8 @@ function TaskEditor({
         initialSpec={m.initialSpec}
         setInitialSpec={(next) => p((t) => (t.initialSpec = next))}
       />
+
+      <TaskCopyEditor copy={m.copy} setCopy={(c) => p((t) => (t.copy = c))} />
 
       {m.type === 'task_warmup' && (
         <details className="border border-dashed border-[var(--rule)] p-3">
@@ -2073,15 +2276,35 @@ function ConfirmButton({
 
 function FieldLabel({
   label,
+  onClear,
+  clearDisabled = false,
   children,
 }: {
   label: string;
+  // Show a "× clear" link beside the label. Use for non-required content
+  // fields (taskDescription, body) so the researcher can empty them in one
+  // click — empty values aren't rendered to the participant.
+  onClear?: () => void;
+  clearDisabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div>
-      <div className="text-xs uppercase tracking-[0.12em] text-[var(--muted)] mb-1">
-        {label}
+      <div className="flex justify-between items-center mb-1">
+        <div className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+          {label}
+        </div>
+        {onClear && (
+          <button
+            type="button"
+            onClick={onClear}
+            disabled={clearDisabled}
+            className="text-[10px] italic text-[var(--muted)] hover:text-[var(--danger)] disabled:opacity-30 disabled:cursor-not-allowed"
+            title="Empty this field — participant won't see anything here."
+          >
+            × clear
+          </button>
+        )}
       </div>
       {children}
     </div>
