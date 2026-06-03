@@ -2,33 +2,6 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getResearcherSession } from '@/lib/auth/researcher';
-import { createServiceRoleClient } from '@/lib/supabase/service';
-import { migrateContent } from '@/lib/study/reducer';
-import type { ThinkAloudWarmupModule } from '@/lib/types/study';
-
-// Pull the active study's first think-aloud warmup so the researcher answer
-// key card matches whatever the participant will see — instead of being a
-// frozen literal that drifts when the warmup anagram is edited.
-async function loadActiveAnagram(): Promise<
-  { scrambled: string; answer: string } | null
-> {
-  const supabase = createServiceRoleClient();
-  const { data: shown } = await supabase
-    .from('studies')
-    .select('authored_data')
-    .eq('visibility', 'shown')
-    .maybeSingle();
-  if (!shown) return null;
-  const content = migrateContent(shown.authored_data);
-  const warmup = content.modules.find(
-    (m): m is ThinkAloudWarmupModule => m.type === 'think_aloud_warmup',
-  );
-  if (!warmup) return null;
-  const scrambled = warmup.revealedTask?.trim();
-  const answer = warmup.revealedAnswer?.trim();
-  if (!scrambled || !answer) return null;
-  return { scrambled, answer };
-}
 
 export default async function Home() {
   const [user, researcher] = await Promise.all([
@@ -37,7 +10,6 @@ export default async function Home() {
   ]);
   const isResearcher = researcher.ok === true;
   const isParticipant = user !== null;
-  const anagram = isResearcher ? await loadActiveAnagram() : null;
 
   // Researcher session present → always show the picker so the researcher
   // can hop into /create or pilot the participant flow without getting
@@ -107,16 +79,6 @@ export default async function Home() {
             )}
           </div>
 
-          {anagram ? (
-            <section className="mt-10 border border-dashed border-[var(--rule)] bg-[var(--rule-soft)] p-4">
-              <p className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-2">
-                Researcher answer key · Think-aloud anagram
-              </p>
-              <p className="font-mono text-2xl tracking-[0.4em]">
-                {anagram.scrambled} &nbsp;→&nbsp; {anagram.answer}
-              </p>
-            </section>
-          ) : null}
         </div>
       </main>
     );
