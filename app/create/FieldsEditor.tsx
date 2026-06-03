@@ -37,7 +37,10 @@ function dedupeValues(opts: Option[]): Option[] {
     const base = o.value || slugify(o.label);
     const n = (seen.get(base) ?? 0) + 1;
     seen.set(base, n);
-    return { value: n === 1 ? base : `${base}_${n}`, label: o.label };
+    // Spread first so per-option flags (terminator) survive — only value is
+    // rewritten for de-duplication. Dropping `...o` here silently strips the
+    // terminator selection on every save.
+    return { ...o, value: n === 1 ? base : `${base}_${n}`, label: o.label };
   });
 }
 
