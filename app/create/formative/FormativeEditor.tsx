@@ -262,7 +262,7 @@ function ProjectEditor({
   const selected = content.modules.find((m) => m.id === selectedId) ?? null;
 
   return (
-    <div className="flex-1 flex min-h-0 border-t border-[var(--rule)]">
+    <div className="flex-1 flex min-h-0">
       <ModuleSidebar
         project={project}
         allProjects={allProjects}
@@ -2585,11 +2585,11 @@ function AddModuleControl({
 }) {
   const [type, setType] = useState<ModuleType>('task');
   return (
-    <div className="mt-6 flex gap-2 items-center">
+    <div className="flex gap-2 items-center">
       <select
         value={type}
         onChange={(e) => setType(e.target.value as ModuleType)}
-        className="border border-[var(--rule)] px-2 py-1 bg-white text-sm"
+        className="border border-[var(--rule)] px-1 py-1 bg-white text-xs min-w-0 flex-1"
       >
         {(Object.keys(MODULE_TYPE_LABEL) as ModuleType[]).map((t) => (
           <option key={t} value={t}>

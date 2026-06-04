@@ -11,7 +11,7 @@ export default async function FormativePage(props: {
   const projects = await listProjects();
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="h-screen flex flex-col min-h-0">
       <div className="px-6 pt-4 shrink-0">
         <CreateNav current="protocol" />
       </div>
