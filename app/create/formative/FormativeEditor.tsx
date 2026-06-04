@@ -2119,12 +2119,12 @@ function SeededMarkerEditor({
       {markers.map((m, i) => (
         <div
           key={i}
-          className="grid grid-cols-[60px_70px_1fr_auto] gap-2 items-center text-sm"
+          className="grid grid-cols-[60px_70px_1fr_auto] gap-2 items-start text-sm"
         >
           <span className="text-xs text-[var(--muted)]">
             {m.kind === 'vehicle'
               ? `Veh ${VEHICLE_COLOR_TO_NUMBER[m.color]}`
-              : `Rider ${m.letter} · dropoff`}
+              : `Rider ${m.letter}`}
           </span>
           {m.kind === 'vehicle' ? (
             <span
@@ -2132,30 +2132,72 @@ function SeededMarkerEditor({
               style={{ background: VEHICLE_HEX[m.color] }}
             />
           ) : (
-            // Rider dropoff renders as an X in the rider's colour (matches the
-            // participant map).
-            <svg width="16" height="16" viewBox="0 0 16 16" aria-label="dropoff X">
-              <line x1="3" y1="3" x2="13" y2="13" stroke={m.personColor} strokeWidth="2.5" strokeLinecap="round" />
-              <line x1="3" y1="13" x2="13" y2="3" stroke={m.personColor} strokeWidth="2.5" strokeLinecap="round" />
+            // Rider = pickup dot + dropoff X in the rider's colour.
+            <svg width="20" height="14" viewBox="0 0 20 14" aria-label="rider pickup + dropoff">
+              <circle cx="4" cy="7" r="3.5" fill={m.personColor} />
+              <line x1="13" y1="3" x2="19" y2="11" stroke={m.personColor} strokeWidth="2.2" strokeLinecap="round" />
+              <line x1="13" y1="11" x2="19" y2="3" stroke={m.personColor} strokeWidth="2.2" strokeLinecap="round" />
             </svg>
           )}
-          <select
-            value={m.landmarkLabel}
-            onChange={(e) =>
-              update(i, { landmarkLabel: e.target.value } as Partial<SeededMarker>)
-            }
-            className="border border-[var(--rule)] px-2 py-1 bg-white text-sm"
-          >
-            {landmarks.map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </select>
+          {m.kind === 'vehicle' ? (
+            <select
+              value={m.landmarkLabel}
+              onChange={(e) =>
+                update(i, { landmarkLabel: e.target.value } as Partial<SeededMarker>)
+              }
+              className="border border-[var(--rule)] px-2 py-1 bg-white text-sm"
+            >
+              {landmarks.map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="flex flex-col gap-1">
+              <label className="flex items-center gap-1 text-[11px] text-[var(--muted)]">
+                <span className="w-10 shrink-0">pickup</span>
+                <select
+                  value={m.landmarkLabel}
+                  onChange={(e) =>
+                    update(i, {
+                      landmarkLabel: e.target.value,
+                    } as Partial<SeededMarker>)
+                  }
+                  className="flex-1 border border-[var(--rule)] px-2 py-1 bg-white text-sm"
+                >
+                  {landmarks.map((l) => (
+                    <option key={l} value={l}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-center gap-1 text-[11px] text-[var(--muted)]">
+                <span className="w-10 shrink-0">dropoff</span>
+                <select
+                  value={m.dropoffLandmarkLabel ?? ''}
+                  onChange={(e) =>
+                    update(i, {
+                      dropoffLandmarkLabel: e.target.value || undefined,
+                    } as Partial<SeededMarker>)
+                  }
+                  className="flex-1 border border-[var(--rule)] px-2 py-1 bg-white text-sm"
+                >
+                  <option value="">— none —</option>
+                  {landmarks.map((l) => (
+                    <option key={l} value={l}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
           <button
             type="button"
             onClick={() => remove(i)}
-            className="text-xs text-[var(--muted)] hover:text-[var(--danger)]"
+            className="text-xs text-[var(--muted)] hover:text-[var(--danger)] self-start"
           >
             ×
           </button>
@@ -2176,7 +2218,7 @@ function SeededMarkerEditor({
           disabled={availablePeople.length === 0}
           className="text-xs italic text-[var(--muted)] hover:text-[var(--foreground)] border border-dashed border-[var(--rule)] px-2 py-1 disabled:opacity-30"
         >
-          + rider dropoff ({availablePeople.length} left)
+          + rider ({availablePeople.length} left)
         </button>
       </div>
     </div>
