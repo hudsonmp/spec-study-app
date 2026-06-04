@@ -40,9 +40,10 @@ export type SeededMarker =
     }
   | {
       kind: 'person';
-      letter: SeededPersonLetter; // label derived: Person A/B/C
+      letter: SeededPersonLetter; // label derived: Rider A/B/C
       personColor: string;        // hex or palette key, picked by researcher
-      landmarkLabel: string;
+      landmarkLabel: string;       // PICKUP landmark (rendered as a dot)
+      dropoffLandmarkLabel?: string; // DROPOFF landmark (rendered as an X)
     };
 
 export const VEHICLE_COLOR_TO_NUMBER: Record<SeededVehicleColor, 1 | 2 | 3> = {

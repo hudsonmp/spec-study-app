@@ -498,28 +498,14 @@ export default function MapCanvas({
                   strokeWidth={isSelected ? 1.5 : 0.6}
                 />
               ) : (
-                // Rider dropoff = an X in the rider's colour.
-                <g>
-                  <circle cx={cx} cy={cy} r={9} fill="transparent" />
-                  <line
-                    x1={cx - 5}
-                    y1={cy - 5}
-                    x2={cx + 5}
-                    y2={cy + 5}
-                    stroke={m.color}
-                    strokeWidth={isSelected ? 3.4 : 2.6}
-                    strokeLinecap="round"
-                  />
-                  <line
-                    x1={cx - 5}
-                    y1={cy + 5}
-                    x2={cx + 5}
-                    y2={cy - 5}
-                    stroke={m.color}
-                    strokeWidth={isSelected ? 3.4 : 2.6}
-                    strokeLinecap="round"
-                  />
-                </g>
+                <circle
+                  cx={cx}
+                  cy={cy}
+                  r={5}
+                  fill={m.color}
+                  stroke={isSelected ? '#1a1a1a' : 'rgba(0,0,0,0.4)'}
+                  strokeWidth={isSelected ? 1.5 : 0.6}
+                />
               )}
               <text
                 x={cx}
@@ -537,41 +523,29 @@ export default function MapCanvas({
 
         {/* Seeded markers (researcher-placed, not draggable/deletable) */}
         {seededMarkers.map((sm, i) => {
-          // Resolve landmark label → coordinates
-          let lx = map.origin.x;
-          let ly = map.origin.y;
-          const lm = map.landmarks.find((l) => l.label === sm.landmarkLabel);
-          if (lm) {
-            lx = lm.x;
-            ly = lm.y;
-          } else if (map.origin.label === sm.landmarkLabel) {
-            lx = map.origin.x;
-            ly = map.origin.y;
-          }
-          const cx = lx * CELL;
-          const cy = ly * CELL;
+          // Resolve a landmark label → pixel coordinates (falls back to origin).
+          const resolve = (lbl?: string) => {
+            let lx = map.origin.x;
+            let ly = map.origin.y;
+            if (lbl) {
+              const lm = map.landmarks.find((l) => l.label === lbl);
+              if (lm) {
+                lx = lm.x;
+                ly = lm.y;
+              } else if (map.origin.label === lbl) {
+                lx = map.origin.x;
+                ly = map.origin.y;
+              }
+            }
+            return { cx: lx * CELL, cy: ly * CELL };
+          };
 
-          const fillColor =
-            sm.kind === 'vehicle'
-              ? VEHICLE_HEX[sm.color]
-              : sm.personColor;
-          const label =
-            sm.kind === 'vehicle'
-              ? `Veh ${VEHICLE_COLOR_TO_NUMBER[sm.color]}`
-              : `Person ${sm.letter}`;
-
-          return (
-            <g key={`seeded-${i}`} pointerEvents="none">
-              {/* Seeded indicator dot above the shape */}
-              <circle
-                cx={cx}
-                cy={cy - 12}
-                r={3}
-                fill={fillColor}
-                stroke="#1a1a1a"
-                strokeWidth={1}
-              />
-              {sm.kind === 'vehicle' ? (
+          if (sm.kind === 'vehicle') {
+            const { cx, cy } = resolve(sm.landmarkLabel);
+            const fillColor = VEHICLE_HEX[sm.color];
+            return (
+              <g key={`seeded-${i}`} pointerEvents="none">
+                <circle cx={cx} cy={cy - 12} r={3} fill={fillColor} stroke="#1a1a1a" strokeWidth={1} />
                 <rect
                   x={cx - 7}
                   y={cy - 4}
@@ -583,38 +557,49 @@ export default function MapCanvas({
                   stroke="#1a1a1a"
                   strokeWidth={2}
                 />
-              ) : (
-                // Rider dropoff = an X in the rider's colour.
-                <g>
-                  <line
-                    x1={cx - 5}
-                    y1={cy - 5}
-                    x2={cx + 5}
-                    y2={cy + 5}
-                    stroke={fillColor}
-                    strokeWidth={3}
-                    strokeLinecap="round"
-                  />
-                  <line
-                    x1={cx - 5}
-                    y1={cy + 5}
-                    x2={cx + 5}
-                    y2={cy - 5}
-                    stroke={fillColor}
-                    strokeWidth={3}
-                    strokeLinecap="round"
-                  />
-                </g>
+                <text x={cx} y={cy + 16} fontSize={9} fill="#1a1a1a" textAnchor="middle">
+                  {`Veh ${VEHICLE_COLOR_TO_NUMBER[sm.color]}`}
+                </text>
+              </g>
+            );
+          }
+
+          // Rider: pickup (dot) + dropoff (X), both in the rider's colour,
+          // joined by a faint dashed line.
+          const c = sm.personColor;
+          const pu = resolve(sm.landmarkLabel);
+          const drop = sm.dropoffLandmarkLabel
+            ? resolve(sm.dropoffLandmarkLabel)
+            : null;
+          return (
+            <g key={`seeded-${i}`} pointerEvents="none">
+              {drop && (
+                <line
+                  x1={pu.cx}
+                  y1={pu.cy}
+                  x2={drop.cx}
+                  y2={drop.cy}
+                  stroke={c}
+                  strokeWidth={1}
+                  strokeDasharray="3 3"
+                  opacity={0.55}
+                />
               )}
-              <text
-                x={cx}
-                y={cy + 16}
-                fontSize={9}
-                fill="#1a1a1a"
-                textAnchor="middle"
-              >
-                {label}
+              {/* Pickup = filled dot */}
+              <circle cx={pu.cx} cy={pu.cy} r={5} fill={c} stroke="#1a1a1a" strokeWidth={2} />
+              <text x={pu.cx} y={pu.cy + 16} fontSize={9} fill="#1a1a1a" textAnchor="middle">
+                {`Rider ${sm.letter} · pickup`}
               </text>
+              {/* Dropoff = X */}
+              {drop && (
+                <>
+                  <line x1={drop.cx - 5} y1={drop.cy - 5} x2={drop.cx + 5} y2={drop.cy + 5} stroke={c} strokeWidth={3} strokeLinecap="round" />
+                  <line x1={drop.cx - 5} y1={drop.cy + 5} x2={drop.cx + 5} y2={drop.cy - 5} stroke={c} strokeWidth={3} strokeLinecap="round" />
+                  <text x={drop.cx} y={drop.cy + 16} fontSize={9} fill="#1a1a1a" textAnchor="middle">
+                    {`Rider ${sm.letter} · dropoff`}
+                  </text>
+                </>
+              )}
             </g>
           );
         })}
