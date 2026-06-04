@@ -1645,7 +1645,8 @@ function TaskRunner({
   onAdvance?: () => void;
 }) {
   const t: TaskContent = m;
-  const retro = t.perScenarioRetrospective ?? [];
+  // Per-scenario retrospective applies to the REAL task only, not the warmup.
+  const retro = m.type === 'task' ? t.perScenarioRetrospective ?? [] : [];
 
   const [step, setStep] = useState<TaskStep>(initialStep ?? { kind: 'intro' });
   const [spec, setSpec] = useLocalString(`pf:${projectId}:${m.id}:spec`);
@@ -2169,29 +2170,34 @@ function ScenarioReadStep({
             </h2>
             <RequirementsBlock requirements={t.requirements} compact />
           </div>
-          <div className="border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
-            <div className="flex justify-between items-baseline mb-1">
-              <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--accent)]">
-                New this screen
-              </span>
-              <span className="text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
-                Scenario {scenarioIdx + 1} of {totalScenarios}
-              </span>
+          {/* Scenario (skinny) and the map sit side by side. */}
+          <div className="flex gap-3 items-start">
+            <div className="flex-1 min-w-0 border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
+              <div className="flex justify-between items-baseline mb-1">
+                <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--accent)]">
+                  New this screen
+                </span>
+                <span className="text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
+                  Scenario {scenarioIdx + 1} of {totalScenarios}
+                </span>
+              </div>
+              <h3 className="text-xl font-medium">{scenario.title}</h3>
+              <ClauseList clauses={scenario.clauses} highlightable />
             </div>
-            <h3 className="text-xl font-medium">{scenario.title}</h3>
-            <ClauseList clauses={scenario.clauses} highlightable />
+            {t.cityMap && (
+              <div className="shrink-0 w-[300px]">
+                <MapCanvas
+                  map={t.cityMap}
+                  scenarioId={scenario.id}
+                  storageKey={`pf:${projectId}:${moduleId}`}
+                  onEvent={(eventType, payload) =>
+                    save.recordEvent(eventType, payload)
+                  }
+                  seededMarkers={scenario.seededMarkers ?? []}
+                />
+              </div>
+            )}
           </div>
-          {t.cityMap && (
-            <MapCanvas
-              map={t.cityMap}
-              scenarioId={scenario.id}
-              storageKey={`pf:${projectId}:${moduleId}`}
-              onEvent={(eventType, payload) =>
-                save.recordEvent(eventType, payload)
-              }
-              seededMarkers={scenario.seededMarkers ?? []}
-            />
-          )}
         </section>
       </Panel>
       <SplitHandle />
@@ -2340,29 +2346,34 @@ function ScenarioReviseStep({
             </h2>
             <RequirementsBlock requirements={t.requirements} compact />
           </div>
-          <div className="border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
-            <div className="flex justify-between items-baseline mb-1">
-              <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--accent)]">
-                New this screen
-              </span>
-              <span className="text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
-                Scenario {scenarioIdx + 1}
-              </span>
+          {/* Scenario (skinny) and the map sit side by side. */}
+          <div className="flex gap-3 items-start">
+            <div className="flex-1 min-w-0 border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
+              <div className="flex justify-between items-baseline mb-1">
+                <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--accent)]">
+                  New this screen
+                </span>
+                <span className="text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
+                  Scenario {scenarioIdx + 1}
+                </span>
+              </div>
+              <h3 className="font-medium">{scenario.title}</h3>
+              <ClauseList clauses={scenario.clauses} highlightable />
             </div>
-            <h3 className="font-medium">{scenario.title}</h3>
-            <ClauseList clauses={scenario.clauses} highlightable />
+            {t.cityMap && (
+              <div className="shrink-0 w-[300px]">
+                <MapCanvas
+                  map={t.cityMap}
+                  scenarioId={scenario.id}
+                  storageKey={`pf:${projectId}:${moduleId}`}
+                  onEvent={(eventType, payload) =>
+                    save.recordEvent(eventType, payload)
+                  }
+                  seededMarkers={scenario.seededMarkers ?? []}
+                />
+              </div>
+            )}
           </div>
-          {t.cityMap && (
-            <MapCanvas
-              map={t.cityMap}
-              scenarioId={scenario.id}
-              storageKey={`pf:${projectId}:${moduleId}`}
-              onEvent={(eventType, payload) =>
-                save.recordEvent(eventType, payload)
-              }
-              seededMarkers={scenario.seededMarkers ?? []}
-            />
-          )}
         </section>
       </Panel>
       <SplitHandle />
@@ -2655,8 +2666,10 @@ function TaskExampleRunner({
     if (step.kind === 'intro') return transitionTo({ kind: 'initial_spec' });
     if (step.kind === 'initial_spec')
       return transitionTo({ kind: 'scenario_read', idx: 0 });
+    // No pause-and-ponder in the example — read → revise, mirroring the real
+    // task's default flow.
     if (step.kind === 'scenario_read')
-      return transitionTo({ kind: 'scenario_ponder', idx: step.idx });
+      return transitionTo({ kind: 'scenario_revise', idx: step.idx });
     if (step.kind === 'scenario_ponder')
       return transitionTo({ kind: 'scenario_revise', idx: step.idx });
     if (step.kind === 'scenario_revise') {
@@ -2878,58 +2891,55 @@ function RetrospectiveRunner({
   controlled?: boolean;
   onAdvance?: () => void;
 }) {
+  // Retrospective answers are VERBAL (think-aloud) — no typed textarea. We
+  // only track which question is on screen and log advancement.
   const [stepIdx, setStepIdx] = useState(initialStepIdx ?? 0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [hydrated, setHydrated] = useState(false);
-  const key = `pf:${projectId}:${m.id}:answers`;
 
-  useEffect(() => {
-    const stored = window.localStorage.getItem(key);
-    if (stored) {
-      try {
-        setAnswers(JSON.parse(stored));
-      } catch {
-        /* ignore */
-      }
+  // Source = the most recent REAL task (type === 'task') BEFORE this
+  // retrospective, by MODULE ORDER — deterministic, independent of which task
+  // the participant finished last. This guarantees the final retrospective
+  // shows the real-task (rideshare) spec, never the warmup (vending) spec,
+  // even under non-linear preview navigation. Read straight from that
+  // module's own localStorage rows (written by the task's spec/entities state).
+  const sourceModuleId = useMemo(() => {
+    const myIdx = project.content.modules.findIndex((mod) => mod.id === m.id);
+    const preceding =
+      myIdx < 0
+        ? project.content.modules
+        : project.content.modules.slice(0, myIdx);
+    for (let i = preceding.length - 1; i >= 0; i--) {
+      if (preceding[i].type === 'task') return preceding[i].id;
     }
-    setHydrated(true);
-  }, [key]);
+    return null;
+  }, [project.content.modules, m.id]);
 
-  useEffect(() => {
-    if (!hydrated) return;
-    window.localStorage.setItem(key, JSON.stringify(answers));
-  }, [key, answers, hydrated]);
-
-  // Source spec/entities come from the dedicated `last_*` pointer keys
-  // written by writeLastSpecPointer when the previous task module finished.
-  // If the participant skipped the task or is running the retrospective
-  // standalone, the keys will be missing and we render a "no specification
-  // recorded" placeholder.
   const [latestSpec, setLatestSpec] = useState<string>('');
   const [latestEntities, setLatestEntities] = useState<Entity[]>([]);
-  const [sourceModuleId, setSourceModuleId] = useState<string | null>(null);
   useEffect(() => {
-    const spec = window.localStorage.getItem(`pf:${projectId}:last_spec`);
+    if (!sourceModuleId) {
+      setLatestSpec('');
+      setLatestEntities([]);
+      return;
+    }
+    const spec = window.localStorage.getItem(
+      `pf:${projectId}:${sourceModuleId}:spec`,
+    );
     const entitiesRaw = window.localStorage.getItem(
-      `pf:${projectId}:last_entities`,
+      `pf:${projectId}:${sourceModuleId}:entities`,
     );
-    const srcId = window.localStorage.getItem(
-      `pf:${projectId}:last_task_module_id`,
-    );
-    if (spec !== null) setLatestSpec(spec);
-    if (entitiesRaw !== null) {
+    setLatestSpec(spec ?? '');
+    if (entitiesRaw) {
       try {
         const parsed = JSON.parse(entitiesRaw) as Entity[];
-        if (Array.isArray(parsed)) setLatestEntities(parsed);
+        setLatestEntities(Array.isArray(parsed) ? parsed : []);
       } catch {
-        /* ignore */
+        setLatestEntities([]);
       }
+    } else {
+      setLatestEntities([]);
     }
-    if (srcId) setSourceModuleId(srcId);
-  }, [projectId]);
+  }, [projectId, sourceModuleId]);
 
-  // Resolve the source module's label so the locked spec block can be
-  // titled "Specification from Module N — <title>".
   const sourceModuleCaption = useMemo(() => {
     if (!sourceModuleId) return null;
     const idx = project.content.modules.findIndex(
@@ -2946,27 +2956,6 @@ function RetrospectiveRunner({
 
   const specHasContent = latestSpec.length > 0 || latestEntities.length > 0;
 
-  // Per-question debounced save
-  const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const [savedAt, setSavedAt] = useState<Record<string, string>>({});
-  function updateAnswer(qid: string, value: string) {
-    setAnswers((a) => ({ ...a, [qid]: value }));
-    if (debounceTimers.current[qid])
-      clearTimeout(debounceTimers.current[qid]);
-    debounceTimers.current[qid] = setTimeout(() => {
-      save.upsert(`retro:${qid}`, value);
-      save.recordEvent('retro_edit', {
-        questionId: qid,
-        value,
-        client_ts: new Date().toISOString(),
-      });
-      setSavedAt((prev) => ({
-        ...prev,
-        [qid]: new Date().toLocaleTimeString([], { hour12: false }),
-      }));
-    }, 1000);
-  }
-
   const total = m.questions.length;
   // Edge case: empty retrospective module — auto-advance. Hoisted above the
   // early return so the hook always runs in the same order.
@@ -2981,7 +2970,7 @@ function RetrospectiveRunner({
 
   function advance() {
     if (stepIdx === total - 1) {
-      save.recordEvent('retro_submit', { answers });
+      save.recordEvent('retro_submit', { questionCount: total });
       if (controlled) onAdvance?.();
       else onComplete();
     } else {
@@ -3007,23 +2996,16 @@ function RetrospectiveRunner({
             </h2>
           </header>
           <div>
-            <p className="leading-relaxed mb-2">
+            <p className="text-xl leading-relaxed mb-4">
               <strong>{stepIdx + 1}.</strong> {q.text}
             </p>
-            <div className="flex justify-end mb-1">
-              <SavedHint at={savedAt[q.id] ?? null} />
-            </div>
-            <textarea
-              value={answers[q.id] ?? ''}
-              onChange={(e) => updateAnswer(q.id, e.target.value)}
-              className="w-full border border-[var(--rule)] p-3 bg-[var(--panel)] focus:outline-none focus:border-[var(--accent)] leading-relaxed resize-y"
-              style={{ minHeight: `${Math.max(q.boxHeight, 1) * 80}px` }}
-              placeholder="Reflect on your reasoning…"
-            />
-            <div className="pt-3">
+            <p className="text-xs italic text-[var(--muted)] mb-4">
+              Answer aloud — the researcher is recording your response.
+            </p>
+            <div className="pt-1">
               <ContinueButton
                 onClick={advance}
-                label={stepIdx === total - 1 ? 'Submit' : 'Next question'}
+                label={stepIdx === total - 1 ? 'Done' : 'Next question'}
               />
             </div>
           </div>

@@ -1207,15 +1207,18 @@ function TaskEditor({
         </span>
       </label>
 
-      <PerScenarioRetrospectiveEditor
-        questions={m.perScenarioRetrospective ?? []}
-        setQuestions={(next) =>
-          p((t) => {
-            if (next.length === 0) delete t.perScenarioRetrospective;
-            else t.perScenarioRetrospective = next;
-          })
-        }
-      />
+      {/* Per-scenario retrospective is a REAL-task feature only — not warmups. */}
+      {m.type === 'task' && (
+        <PerScenarioRetrospectiveEditor
+          questions={m.perScenarioRetrospective ?? []}
+          setQuestions={(next) =>
+            p((t) => {
+              if (next.length === 0) delete t.perScenarioRetrospective;
+              else t.perScenarioRetrospective = next;
+            })
+          }
+        />
+      )}
 
       <Section
         title={`Scenarios (${m.scenarios.length}/3)`}

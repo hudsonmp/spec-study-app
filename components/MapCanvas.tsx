@@ -498,14 +498,28 @@ export default function MapCanvas({
                   strokeWidth={isSelected ? 1.5 : 0.6}
                 />
               ) : (
-                <circle
-                  cx={cx}
-                  cy={cy}
-                  r={5}
-                  fill={m.color}
-                  stroke={isSelected ? '#1a1a1a' : 'rgba(0,0,0,0.4)'}
-                  strokeWidth={isSelected ? 1.5 : 0.6}
-                />
+                // Rider dropoff = an X in the rider's colour.
+                <g>
+                  <circle cx={cx} cy={cy} r={9} fill="transparent" />
+                  <line
+                    x1={cx - 5}
+                    y1={cy - 5}
+                    x2={cx + 5}
+                    y2={cy + 5}
+                    stroke={m.color}
+                    strokeWidth={isSelected ? 3.4 : 2.6}
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1={cx - 5}
+                    y1={cy + 5}
+                    x2={cx + 5}
+                    y2={cy - 5}
+                    stroke={m.color}
+                    strokeWidth={isSelected ? 3.4 : 2.6}
+                    strokeLinecap="round"
+                  />
+                </g>
               )}
               <text
                 x={cx}
@@ -570,14 +584,27 @@ export default function MapCanvas({
                   strokeWidth={2}
                 />
               ) : (
-                <circle
-                  cx={cx}
-                  cy={cy}
-                  r={5}
-                  fill={fillColor}
-                  stroke="#1a1a1a"
-                  strokeWidth={2}
-                />
+                // Rider dropoff = an X in the rider's colour.
+                <g>
+                  <line
+                    x1={cx - 5}
+                    y1={cy - 5}
+                    x2={cx + 5}
+                    y2={cy + 5}
+                    stroke={fillColor}
+                    strokeWidth={3}
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1={cx - 5}
+                    y1={cy + 5}
+                    x2={cx + 5}
+                    y2={cy - 5}
+                    stroke={fillColor}
+                    strokeWidth={3}
+                    strokeLinecap="round"
+                  />
+                </g>
               )}
               <text
                 x={cx}

@@ -56,9 +56,10 @@ export type Screen = {
 // back-compat but no longer enumerated.
 const TASK_STEPS_BASE: ScreenKind[] = ['task_intro', 'task_initial_spec'];
 
+// Worked-example task mirrors the real task's default flow: read → revise,
+// no pause-and-ponder screen.
 const TASK_EXAMPLE_STEPS_PER_SCENARIO: ScreenKind[] = [
   'task_example_scenario_read',
-  'task_example_scenario_ponder',
   'task_example_scenario_revise',
 ];
 
@@ -231,7 +232,8 @@ export function enumerateScreens(content: ProjectContent): Screen[] {
               : title,
         });
       });
-      const retro = m.perScenarioRetrospective ?? [];
+      // Per-scenario retrospective is a REAL-task feature only (not warmups).
+      const retro = m.type === 'task' ? m.perScenarioRetrospective ?? [] : [];
       // Per-scenario screens: a read beat (spec read-only — locate the gap)
       // then a revise beat (spec editable). Separating "decide" from "write"
       // keeps think-aloud on requirement reasoning rather than transcription
