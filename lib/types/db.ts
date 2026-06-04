@@ -161,6 +161,60 @@ export type Database = {
           },
         ]
       }
+      study_snapshots: {
+        Row: {
+          client_ts: string | null
+          created_at: string
+          entities: Json
+          id: string
+          module_id: string
+          phase: string
+          scenario_idx: number | null
+          spec: string
+          study_id: string
+          user_id: string
+        }
+        Insert: {
+          client_ts?: string | null
+          created_at?: string
+          entities?: Json
+          id?: string
+          module_id: string
+          phase: string
+          scenario_idx?: number | null
+          spec?: string
+          study_id: string
+          user_id: string
+        }
+        Update: {
+          client_ts?: string | null
+          created_at?: string
+          entities?: Json
+          id?: string
+          module_id?: string
+          phase?: string
+          scenario_idx?: number | null
+          spec?: string
+          study_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "study_snapshots_study_id_fkey"
+            columns: ["study_id"]
+            isOneToOne: false
+            referencedRelation: "studies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "study_snapshots_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       study_responses: {
         Row: {
           id: string

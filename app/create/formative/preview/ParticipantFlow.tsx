@@ -44,6 +44,7 @@ import {
 import {
   recordEventAction,
   upsertResponseAction,
+  recordSnapshotAction,
   finishStudyAction,
   participantLogoutAction,
 } from '@/app/study/actions';
@@ -55,6 +56,14 @@ import MapCanvas from '@/components/MapCanvas';
 type SaveAdapter = {
   recordEvent: (eventType: string, payload: unknown) => void;
   upsert: (sectionKey: string, value: string) => void;
+  // Append a queryable per-(module,scenario,phase) snapshot row. spec + the
+  // JSON-encoded entities, plus a client timestamp for ordering.
+  snapshot: (
+    phase: 'initial' | 'after_scenario' | 'final',
+    scenarioIdx: number | null,
+    spec: string,
+    entitiesJson: string,
+  ) => void;
 };
 
 function makeSaveAdapter(
@@ -63,7 +72,7 @@ function makeSaveAdapter(
   skipPersist: boolean,
 ): SaveAdapter {
   if (participantId === null) {
-    return { recordEvent: () => {}, upsert: () => {} };
+    return { recordEvent: () => {}, upsert: () => {}, snapshot: () => {} };
   }
   return {
     recordEvent: (eventType, payload) => {
@@ -82,6 +91,17 @@ function makeSaveAdapter(
         skipPersist,
       }).catch(() => {});
     },
+    snapshot: (phase, scenarioIdx, spec, entitiesJson) => {
+      void recordSnapshotAction({
+        moduleId,
+        scenarioIdx,
+        phase,
+        spec,
+        entities: entitiesJson,
+        clientTs: new Date().toISOString(),
+        skipPersist,
+      }).catch(() => {});
+    },
   };
 }
 
@@ -91,6 +111,12 @@ function makeSaveAdapter(
 // participant has a live session AND the source module persists (warmups
 // don't). The 'task_complete_spec_snapshot' event mirrors the upsert in
 // the event log so we can replay completion order.
+//
+// NOTE: `_meta:last_*` is intentionally last-write-wins across task modules —
+// it's a convenience pointer for the end-of-activity retrospective, which
+// should reference the most recently completed (i.e. the real) task. The
+// canonical, per-module, per-scenario record lives in study_snapshots and the
+// `<moduleId>:spec:current` response rows, so nothing is lost by the overwrite.
 function writeLastSpecPointer({
   projectId,
   moduleId,
@@ -256,21 +282,49 @@ const SPEC_PLACEHOLDER = DEFAULT_TASK_COPY.specPlaceholder;
 
 const EXAMPLE_BANNER_TEXT = 'Example — the researcher will walk through this';
 
-function useDebouncedSave(value: string, save: (v: string) => void, ms = 1000) {
+// Debounced save that also exposes flush() — call it before any screen
+// advance so a final edit made <ms before clicking Continue is persisted to
+// the rolling :current row + the edit-event stream (otherwise it's dropped
+// and only survives in the boundary snapshot). Returns flush.
+function useDebouncedSave(
+  value: string,
+  save: (v: string) => void,
+  ms = 1000,
+): () => void {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const first = useRef(true);
+  const latest = useRef(value);
+  const dirty = useRef(false);
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  latest.current = value;
   useEffect(() => {
     if (first.current) {
       first.current = false;
       return;
     }
+    dirty.current = true;
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => save(value), ms);
+    timer.current = setTimeout(() => {
+      saveRef.current(latest.current);
+      dirty.current = false;
+    }, ms);
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, ms]);
+
+  return useCallback(() => {
+    if (timer.current) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+    if (dirty.current) {
+      saveRef.current(latest.current);
+      dirty.current = false;
+    }
+  }, []);
 }
 
 // ===================== Inline copy editing (preview) =====================
@@ -1540,7 +1594,7 @@ function TaskRunner({
   const [specSavedAt, markSpecSaved] = useSavedAt();
   const [entitiesSavedAt, markEntitiesSaved] = useSavedAt();
 
-  useDebouncedSave(spec, (v) => {
+  const flushSpec = useDebouncedSave(spec, (v) => {
     save.upsert('spec:current', v);
     save.recordEvent('spec_edit', {
       value: v,
@@ -1551,7 +1605,7 @@ function TaskRunner({
 
   // Encode entities once; we save the JSON blob so analyses can re-parse.
   const entitiesJson = useMemo(() => JSON.stringify(entities), [entities]);
-  useDebouncedSave(entitiesJson, (v) => {
+  const flushEntities = useDebouncedSave(entitiesJson, (v) => {
     save.upsert('entities:current', v);
     save.recordEvent('entities_edit', {
       value: v,
@@ -1559,6 +1613,46 @@ function TaskRunner({
     });
     markEntitiesSaved();
   });
+
+  // Per-scenario retrospective answers: debounce the upsert (was firing on
+  // every keystroke) + emit a scenario_retro_edit timeline event. Timers keyed
+  // by `<scenarioIdx>:<qIdx>`; flushed on advance.
+  const retroTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const retroPending = useRef<Record<string, string>>({});
+  function saveRetro(answerKey: string, value: string) {
+    retroPending.current[answerKey] = value;
+    if (retroTimers.current[answerKey])
+      clearTimeout(retroTimers.current[answerKey]);
+    retroTimers.current[answerKey] = setTimeout(() => {
+      save.upsert(`scenario_retro:${answerKey}`, value);
+      save.recordEvent('scenario_retro_edit', {
+        answerKey,
+        value,
+        client_ts: new Date().toISOString(),
+      });
+      delete retroPending.current[answerKey];
+    }, 800);
+  }
+  function flushRetro() {
+    for (const key of Object.keys(retroPending.current)) {
+      if (retroTimers.current[key]) clearTimeout(retroTimers.current[key]);
+      save.upsert(`scenario_retro:${key}`, retroPending.current[key]);
+      save.recordEvent('scenario_retro_edit', {
+        answerKey: key,
+        value: retroPending.current[key],
+        client_ts: new Date().toISOString(),
+      });
+    }
+    retroPending.current = {};
+  }
+
+  // Persist any pending debounced edit before leaving the screen, so a final
+  // keystroke made just before Continue isn't dropped from the edit stream.
+  function flushEdits() {
+    flushSpec();
+    flushEntities();
+    flushRetro();
+  }
 
   function transitionTo(nextStep: TaskStep) {
     save.recordEvent('step_advance', {
@@ -1580,6 +1674,7 @@ function TaskRunner({
   // route to the outro screen if authored, else complete.
   function endTask(): void {
     save.recordEvent('spec_snapshot', { at: 'final', value: spec });
+    save.snapshot('final', null, spec, entitiesJson);
     writeLastSpecPointer({
       projectId,
       moduleId: m.id,
@@ -1612,6 +1707,7 @@ function TaskRunner({
       at: `after_scenario_${idx}`,
       value: entitiesJson,
     });
+    save.snapshot('after_scenario', idx, spec, entitiesJson);
     if (retro.length > 0) {
       return transitionTo({ kind: 'scenario_retro', idx, qIdx: 0 });
     }
@@ -1619,6 +1715,9 @@ function TaskRunner({
   }
 
   function next(): void {
+    // Persist any pending debounced edit before advancing (P0: otherwise a
+    // final keystroke <1s before Continue is dropped from the edit stream).
+    flushEdits();
     // Requirements live on the initial-spec screen — no separate context step.
     if (step.kind === 'intro') return transitionTo({ kind: 'initial_spec' });
     if (step.kind === 'context')
@@ -1630,6 +1729,7 @@ function TaskRunner({
         at: 'initial',
         value: entitiesJson,
       });
+      save.snapshot('initial', null, spec, entitiesJson);
       return transitionTo({ kind: 'scenario_read', idx: 0 });
     }
     if (step.kind === 'scenario_read') {
@@ -1778,7 +1878,7 @@ function TaskRunner({
         value={retroAnswers[answerKey] ?? ''}
         onChange={(v) => {
           setRetroAnswer(answerKey, v);
-          save.upsert(`scenario_retro:${answerKey}`, v);
+          saveRetro(answerKey, v);
         }}
         spec={spec}
         entities={entities}
