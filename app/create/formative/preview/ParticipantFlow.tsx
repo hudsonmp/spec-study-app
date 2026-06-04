@@ -21,6 +21,7 @@ import type {
   LoadedProject,
   Module,
   ProjectContent,
+  InstructionsModule,
   TaskContent,
   TaskExample,
   TaskExampleModule,
@@ -498,6 +499,8 @@ function screenToTaskStep(screen: Screen): TaskStep {
       return { kind: 'scenario_revise', idx };
     case 'task_scenario_retro':
       return { kind: 'scenario_retro', idx, qIdx: screen.subIdx ?? 0 };
+    case 'task_outro':
+      return { kind: 'outro' };
     default:
       return { kind: 'intro' };
   }
@@ -509,13 +512,16 @@ type ExStep =
   | { kind: 'initial_spec' }
   | { kind: 'scenario_read'; idx: number }
   | { kind: 'scenario_ponder'; idx: number }
-  | { kind: 'scenario_revise'; idx: number };
+  | { kind: 'scenario_revise'; idx: number }
+  | { kind: 'single' };
 
 function screenToExampleStep(screen: Screen): ExStep {
   const idx = screen.idx ?? 0;
   switch (screen.kind) {
     case 'task_example_intro':
       return { kind: 'intro' };
+    case 'task_example_single':
+      return { kind: 'single' };
     case 'task_example_initial_spec':
       return { kind: 'initial_spec' };
     case 'task_example_scenario_read':
@@ -963,6 +969,59 @@ function ExampleBanner() {
   );
 }
 
+// ============================== Instructions =============================
+// Generic interstitial: title + body + Continue. Inline-editable in preview.
+
+function InstructionsRunner({
+  module: m,
+  save,
+  onComplete,
+  controlled = false,
+  onAdvance,
+}: {
+  module: InstructionsModule;
+  save: SaveAdapter;
+  onComplete: () => void;
+  controlled?: boolean;
+  onAdvance?: () => void;
+}) {
+  const edit = useEdit();
+  const setField = (key: 'title' | 'body', v: string) =>
+    edit.editModule(m.id, (mod) => {
+      if (mod.type !== 'instructions') return;
+      mod[key] = v;
+    });
+  function finish() {
+    save.recordEvent('step_advance', { from: 'instructions', to: 'done' });
+    if (controlled) onAdvance?.();
+    else onComplete();
+  }
+  return (
+    <Centered>
+      <div className="space-y-6">
+        <EditableText
+          as="h2"
+          className="text-2xl font-medium tracking-tight"
+          value={m.title}
+          onCommit={(v) => setField('title', v)}
+        />
+        {(edit.enabled || m.body) && (
+          <EditableText
+            as="p"
+            className="text-[var(--muted)] leading-relaxed whitespace-pre-wrap text-left"
+            value={m.body}
+            onCommit={(v) => setField('body', v)}
+          />
+        )}
+        <ContinueButton
+          onClick={finish}
+          label={m.copy?.continueLabel?.trim() || 'Continue'}
+        />
+      </div>
+    </Centered>
+  );
+}
+
 // ============================== Module dispatch =============================
 
 function ModuleRunner({
@@ -1014,6 +1073,16 @@ function ModuleRunner({
     onComplete();
   }
 
+  if (m.type === 'instructions')
+    return (
+      <InstructionsRunner
+        module={m}
+        save={save}
+        onComplete={complete}
+        controlled={controlled}
+        onAdvance={onAdvance}
+      />
+    );
   if (m.type === 'think_aloud_warmup')
     return (
       <ThinkAloudWarmupRunner
@@ -1418,7 +1487,8 @@ type TaskStep =
   | { kind: 'scenario_read'; idx: number }
   | { kind: 'scenario_ponder'; idx: number }
   | { kind: 'scenario_revise'; idx: number }
-  | { kind: 'scenario_retro'; idx: number; qIdx: number };
+  | { kind: 'scenario_retro'; idx: number; qIdx: number }
+  | { kind: 'outro' };
 
 function stepLabel(s: TaskStep): string {
   if (s.kind === 'scenario_read') return `scenario_${s.idx}_read`;
@@ -1502,9 +1572,13 @@ function TaskRunner({
     }
   }
 
-  // End the whole module: snapshot the final spec, write the cross-module
-  // pointer for the retrospective, then advance.
-  function finishModule(): void {
+  const hasOutro = !!(
+    t.copy?.outroTitle?.trim() || t.copy?.outroBody?.trim()
+  );
+
+  // Finalize the module's data (final snapshot + cross-module pointer), then
+  // route to the outro screen if authored, else complete.
+  function endTask(): void {
     save.recordEvent('spec_snapshot', { at: 'final', value: spec });
     writeLastSpecPointer({
       projectId,
@@ -1514,20 +1588,39 @@ function TaskRunner({
       entitiesJson,
       skipPersist: isWarmup,
     });
+    if (hasOutro) return transitionTo({ kind: 'outro' });
     if (controlled) return onAdvance?.();
     return onComplete();
   }
 
-  // After a scenario's revise + (optional) retrospective questions, move to
-  // the next scenario or finish the module.
+  // After the next scenario or end of task.
   function afterScenario(idx: number): void {
     const nextIdx = idx + 1;
-    if (nextIdx >= t.scenarios.length) return finishModule();
+    if (nextIdx >= t.scenarios.length) return endTask();
     transitionTo({ kind: 'scenario_read', idx: nextIdx });
   }
 
+  // Leaving a scenario's work screen(s): snapshot, then per-scenario retro (if
+  // any) or move on. Called after `scenario_read` when the recall probe is off,
+  // or after `scenario_revise` when it's on.
+  function leaveScenario(idx: number): void {
+    save.recordEvent('spec_snapshot', {
+      at: `after_scenario_${idx}`,
+      value: spec,
+    });
+    save.recordEvent('entities_snapshot', {
+      at: `after_scenario_${idx}`,
+      value: entitiesJson,
+    });
+    if (retro.length > 0) {
+      return transitionTo({ kind: 'scenario_retro', idx, qIdx: 0 });
+    }
+    return afterScenario(idx);
+  }
+
   function next(): void {
-    if (step.kind === 'intro') return transitionTo({ kind: 'context' });
+    // Requirements live on the initial-spec screen — no separate context step.
+    if (step.kind === 'intro') return transitionTo({ kind: 'initial_spec' });
     if (step.kind === 'context')
       return transitionTo({ kind: 'initial_spec' });
     if (step.kind === 'initial_spec') {
@@ -1539,26 +1632,16 @@ function TaskRunner({
       });
       return transitionTo({ kind: 'scenario_read', idx: 0 });
     }
-    if (step.kind === 'scenario_read')
-      return transitionTo({ kind: 'scenario_ponder', idx: step.idx });
+    if (step.kind === 'scenario_read') {
+      // Recall probe ON → read → ponder → revise. OFF → the read screen IS
+      // the editable work screen; leave straight to retro/next.
+      if (t.enableRecallProbe)
+        return transitionTo({ kind: 'scenario_ponder', idx: step.idx });
+      return leaveScenario(step.idx);
+    }
     if (step.kind === 'scenario_ponder')
       return transitionTo({ kind: 'scenario_revise', idx: step.idx });
-    if (step.kind === 'scenario_revise') {
-      save.recordEvent('spec_snapshot', {
-        at: `after_scenario_${step.idx}`,
-        value: spec,
-      });
-      save.recordEvent('entities_snapshot', {
-        at: `after_scenario_${step.idx}`,
-        value: entitiesJson,
-      });
-      // Per-scenario retrospective questions (if any) come before the next
-      // scenario. Same question set repeats after every scenario.
-      if (retro.length > 0) {
-        return transitionTo({ kind: 'scenario_retro', idx: step.idx, qIdx: 0 });
-      }
-      return afterScenario(step.idx);
-    }
+    if (step.kind === 'scenario_revise') return leaveScenario(step.idx);
     if (step.kind === 'scenario_retro') {
       const nextQ = step.qIdx + 1;
       if (nextQ < retro.length) {
@@ -1569,6 +1652,10 @@ function TaskRunner({
         });
       }
       return afterScenario(step.idx);
+    }
+    if (step.kind === 'outro') {
+      if (controlled) return onAdvance?.();
+      return onComplete();
     }
   }
 
@@ -1602,6 +1689,10 @@ function TaskRunner({
         onContinue={next}
       />
     );
+  }
+
+  if (step.kind === 'outro') {
+    return <TaskOutroStep moduleId={m.id} copy={t.copy} onContinue={next} />;
   }
 
   const scenario = t.scenarios[step.idx];
@@ -1694,7 +1785,9 @@ function TaskRunner({
         onContinue={next}
         continueLabel={
           isLastQuestion && isLastScenario
-            ? 'Finish task'
+            ? hasOutro
+              ? 'Continue'
+              : 'Finish task'
             : isLastQuestion
             ? 'Next scenario'
             : 'Next question'
@@ -1704,6 +1797,44 @@ function TaskRunner({
   }
 
   return null;
+}
+
+// ========================== Task: Done / outro =========================
+
+function TaskOutroStep({
+  moduleId,
+  copy,
+  onContinue,
+}: {
+  moduleId: string;
+  copy: TaskContent['copy'];
+  onContinue: () => void;
+}) {
+  const edit = useEdit();
+  const setCopy = (key: 'outroTitle' | 'outroBody', v: string) =>
+    edit.editModule(moduleId, (mod) => {
+      if (mod.type !== 'task' && mod.type !== 'task_warmup') return;
+      mod.copy = { ...(mod.copy ?? {}), [key]: v };
+    });
+  return (
+    <Centered>
+      <div className="space-y-6">
+        <EditableText
+          as="h2"
+          className="text-2xl font-medium tracking-tight"
+          value={copy?.outroTitle?.trim() || DEFAULT_TASK_COPY.outroTitle}
+          onCommit={(v) => setCopy('outroTitle', v)}
+        />
+        <EditableText
+          as="p"
+          className="text-[var(--muted)] leading-relaxed whitespace-pre-wrap"
+          value={copy?.outroBody?.trim() || DEFAULT_TASK_COPY.outroBody}
+          onCommit={(v) => setCopy('outroBody', v)}
+        />
+        <ContinueButton onClick={onContinue} />
+      </div>
+    </Centered>
+  );
 }
 
 // =============================== Task: Intro ==============================
@@ -2317,6 +2448,7 @@ function TaskExampleRunner({
   }
 
   function next(): void {
+    if (step.kind === 'single') return finish();
     if (step.kind === 'intro') return transitionTo({ kind: 'initial_spec' });
     if (step.kind === 'initial_spec')
       return transitionTo({ kind: 'scenario_read', idx: 0 });
@@ -2331,6 +2463,8 @@ function TaskExampleRunner({
     }
   }
 
+  if (step.kind === 'single')
+    return <ExampleSingleScreen example={m} onContinue={finish} />;
   if (step.kind === 'intro')
     return (
       <ExampleIntroStep
@@ -2384,6 +2518,61 @@ function TaskExampleRunner({
       />
     );
   return null;
+}
+
+// Consolidated single-screen demo: requirements + the first scenario + the
+// prefilled spec all on ONE display-only screen (the researcher walks through
+// it). Used when task_example.singleScreen is set.
+function ExampleSingleScreen({
+  example,
+  onContinue,
+}: {
+  example: TaskExampleModule;
+  onContinue: () => void;
+}) {
+  const scenario = example.scenarios[0];
+  // Prefer the after-read snapshot for scenario 0; fall back to the initial.
+  const moment: PrefilledMoment =
+    example.prefilled.perScenario[0]?.read ??
+    example.prefilled.initial ?? { spec: '', entities: [] };
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <ExampleBanner />
+      <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
+        <Panel defaultSize="50%" minSize="30%" maxSize="70%">
+          <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
+            <h2 className="text-2xl font-medium tracking-tight">
+              {example.title}
+            </h2>
+            <RequirementsBlock requirements={example.requirements} />
+            {scenario && (
+              <div className="border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-[var(--accent)] mb-1">
+                  Scenario
+                </div>
+                <h3 className="font-medium">{scenario.title}</h3>
+                <ClauseList clauses={scenario.clauses} />
+              </div>
+            )}
+          </section>
+        </Panel>
+        <SplitHandle />
+        <Panel defaultSize="50%" minSize="30%" maxSize="70%">
+          <SpecColumn
+            spec={moment.spec}
+            setSpec={() => {}}
+            entities={moment.entities}
+            setEntities={() => {}}
+            specSavedAt={null}
+            entitiesSavedAt={null}
+            onContinue={onContinue}
+            continueLabel="Continue"
+            readOnly
+          />
+        </Panel>
+      </PanelGroup>
+    </div>
+  );
 }
 
 // =================== Task: per-scenario retrospective ===================

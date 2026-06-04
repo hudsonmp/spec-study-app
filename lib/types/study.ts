@@ -104,12 +104,24 @@ export type RetrospectiveItem = {
 // =========================== Modules ===========================
 
 export type ModuleType =
+  | 'instructions'
   | 'think_aloud_warmup'
   | 'think_aloud_example'
   | 'task_warmup'
   | 'task_example'
   | 'task'
   | 'retrospective_report';
+
+// Generic instruction screen — a title + body + Continue. Used for the
+// "general instructions" and "task instructions" interstitials in the flow.
+// Display-only; collects no participant data.
+export type InstructionsModule = {
+  id: string;
+  type: 'instructions';
+  title: string;
+  body: string;
+  copy?: { continueLabel?: string };
+};
 
 // LEGACY shape — was an optional `example` sub-field on warmup/task modules.
 // Kept only so migrateContent can read old authored_data and split it into a
@@ -185,11 +197,19 @@ export type TaskCopy = {
   // The grey italic caption above the spec textarea. Empty string (set via the
   // editor's clear button) hides the caption entirely.
   specPlaceholder?: string;
+  // The "you're done with this task" outro screen shown after the last
+  // scenario. Both empty → no outro screen.
+  outroTitle?: string;
+  outroBody?: string;
 };
 
 export const DEFAULT_TASK_COPY: Required<TaskCopy> = {
+  // PROSPECTIVE, not retrospective: a forward-looking gap-location prompt is
+  // a Level-1/2 (non-reactive) verbalization, whereas "tell me what you
+  // remember/were thinking" is a Type-3 retrospective probe that is reactive
+  // and fabrication-prone (Fox/Ericsson/Best 2011; Ericsson & Simon 1993).
   ponderDefault:
-    'Can you tell me everything you remember, or were thinking about, when you analyzed the last scenario?',
+    'Before you change anything: what does the current specification not yet handle for this scenario, and where would you change it?',
   ponderHoldNote: 'Please do not click Continue until your researcher tells you to.',
   reviseCallout:
     'Your specifications are editable. Continue thinking aloud as you revise them.',
@@ -199,6 +219,8 @@ export const DEFAULT_TASK_COPY: Required<TaskCopy> = {
     'Your responses for this task will be saved and included in the study analysis.',
   specPlaceholder:
     'Specify the rules, types of information, behavior, features, and implementation of the system however feels natural to you. This may include inputs/outputs, data types, pseudocode, prompts to an LLM coding agent, or anything else that feels natural.',
+  outroTitle: 'You’ve finished this task',
+  outroBody: 'Thank you. The researcher will tell you what comes next.',
 };
 
 // Shared task-shaped content. Used by Task, TaskWarmup, and TaskExample.
@@ -214,6 +236,13 @@ export type TaskContent = {
   initialSpec: SpecSubsection[];
   scenarios: Scenario[]; // 1-3 enforced by the editor
   perScenarioRetrospective?: RetrospectiveItem[];
+  // When true, each scenario inserts a retrospective "pause and recall" screen
+  // between reading and revising. Default OFF: this is a Type-3 retrospective
+  // probe (reactive — Fox/Ericsson/Best 2011) that contaminates the revised-
+  // spec process measure, so it stays off unless the run's DV is learning
+  // gains rather than process fidelity. Off → scenarios are a single
+  // read-and-revise screen.
+  enableRecallProbe?: boolean;
   copy?: TaskCopy;
 };
 
@@ -266,11 +295,14 @@ export type TaskExample = TaskContent & {
 
 // Worked example task — a FIRST-CLASS module. Renders the task screens
 // display-only with prefilled spec/entities at each moment; the researcher
-// narrates via `walkthroughText`.
+// narrates via `walkthroughText`. When `singleScreen` is true, the demo is
+// shown as ONE consolidated screen (requirements + first scenario + prefilled
+// spec together) rather than the multi-screen walkthrough.
 export type TaskExampleModule = TaskExample & {
   id: string;
   type: 'task_example';
   walkthroughText?: string;
+  singleScreen?: boolean;
 };
 
 export type RetrospectiveReportModule = {
@@ -291,6 +323,7 @@ export type TaskModule = {
 } & TaskContent;
 
 export type Module =
+  | InstructionsModule
   | ThinkAloudWarmupModule
   | ThinkAloudExampleModule
   | TaskWarmupModule
@@ -322,6 +355,15 @@ export const uid = () => Math.random().toString(36).slice(2, 10);
 
 export function emptyContent(): ProjectContent {
   return { modules: [] };
+}
+
+export function newInstructionsModule(): InstructionsModule {
+  return {
+    id: uid(),
+    type: 'instructions',
+    title: 'Instructions',
+    body: '',
+  };
 }
 
 export function newThinkAloudWarmup(): ThinkAloudWarmupModule {
@@ -453,6 +495,8 @@ export function newTask(): TaskModule {
 
 export function newModuleOfType(type: ModuleType): Module {
   switch (type) {
+    case 'instructions':
+      return newInstructionsModule();
     case 'think_aloud_warmup':
       return newThinkAloudWarmup();
     case 'think_aloud_example':
@@ -471,6 +515,7 @@ export function newModuleOfType(type: ModuleType): Module {
 // Order here drives the "Add module" dropdown order. Worked examples sit
 // next to their non-example counterparts.
 export const MODULE_TYPE_LABEL: Record<ModuleType, string> = {
+  instructions: 'Instructions screen',
   think_aloud_warmup: 'Think-aloud warmup',
   think_aloud_example: 'Think-aloud worked example',
   task_example: 'Worked example task',
@@ -488,6 +533,7 @@ export function isPersistedToDb(type: ModuleType): boolean {
   return (
     type !== 'task_warmup' &&
     type !== 'task_example' &&
-    type !== 'think_aloud_example'
+    type !== 'think_aloud_example' &&
+    type !== 'instructions'
   );
 }

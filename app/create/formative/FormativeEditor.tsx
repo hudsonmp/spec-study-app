@@ -12,6 +12,7 @@ import type {
   LoadedProject,
   ProjectContent,
   Module,
+  InstructionsModule,
   TaskContent,
   TaskCopy,
   ThinkAloudWarmupModule,
@@ -441,6 +442,9 @@ function ModuleCard({
         </div>
       </div>
 
+      {m.type === 'instructions' && (
+        <InstructionsEditor module={m} patch={patch} />
+      )}
       {m.type === 'think_aloud_warmup' && (
         <ThinkAloudWarmupEditor module={m} patch={patch} />
       )}
@@ -456,6 +460,66 @@ function ModuleCard({
       {m.type === 'retrospective_report' && (
         <RetrospectiveReportEditor module={m} patch={patch} />
       )}
+    </div>
+  );
+}
+
+// ===================== Instructions editor ======================
+// A generic interstitial screen: title + body (+ optional Continue label).
+
+function InstructionsEditor({
+  module: m,
+  patch,
+}: {
+  module: InstructionsModule;
+  patch: (fn: (m: Module) => void) => void;
+}) {
+  function p(fn: (mod: InstructionsModule) => void) {
+    patch((mod) => {
+      if (mod.type === 'instructions') fn(mod);
+    });
+  }
+  return (
+    <div className="space-y-3">
+      <p className="text-xs italic text-[var(--muted)]">
+        A standalone instruction screen (e.g. &ldquo;General instructions&rdquo;
+        or &ldquo;Task instructions&rdquo;). Place it anywhere in the module
+        order. Display-only — collects no participant data.
+      </p>
+      <FieldLabel label="Title">
+        <input
+          type="text"
+          className={inputCls}
+          value={m.title}
+          onChange={(e) => p((mod) => (mod.title = e.target.value))}
+        />
+      </FieldLabel>
+      <FieldLabel
+        label="Body"
+        onClear={() => p((mod) => (mod.body = ''))}
+        clearDisabled={!m.body}
+      >
+        <textarea
+          className={inputCls + ' min-h-[140px]'}
+          value={m.body}
+          onChange={(e) => p((mod) => (mod.body = e.target.value))}
+          placeholder="The instructions shown to the participant."
+        />
+      </FieldLabel>
+      <FieldLabel label="Continue button label (optional)">
+        <input
+          type="text"
+          className={inputCls}
+          value={m.copy?.continueLabel ?? ''}
+          onChange={(e) =>
+            p((mod) => {
+              const v = e.target.value;
+              mod.copy = v ? { continueLabel: v } : undefined;
+            })
+          }
+          placeholder="Continue"
+        />
+      </FieldLabel>
     </div>
   );
 }
@@ -717,6 +781,19 @@ function TaskCopyEditor({
           value={copy?.specPlaceholder}
           onChange={(v) => set('specPlaceholder', v)}
         />
+        <CopyOverrideField
+          label="Done-with-task title (blank title + body → no outro screen)"
+          value={copy?.outroTitle}
+          defaultValue={DEFAULT_TASK_COPY.outroTitle}
+          onChange={(v) => set('outroTitle', v)}
+        />
+        <CopyOverrideField
+          label="Done-with-task body"
+          value={copy?.outroBody}
+          defaultValue={DEFAULT_TASK_COPY.outroBody}
+          onChange={(v) => set('outroBody', v)}
+          multiline
+        />
       </div>
     </details>
   );
@@ -936,6 +1013,30 @@ function TaskEditor({
       />
 
       <TaskCopyEditor copy={m.copy} setCopy={(c) => p((t) => (t.copy = c))} />
+
+      <label className="flex items-start gap-2 text-sm cursor-pointer select-none border border-dashed border-[var(--rule)] p-3">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={!!m.enableRecallProbe}
+          onChange={(e) =>
+            p((t) => {
+              if (e.target.checked) t.enableRecallProbe = true;
+              else delete t.enableRecallProbe;
+            })
+          }
+        />
+        <span className="text-[var(--muted)]">
+          Recall-probe pause (read → ponder → revise){' '}
+          <span className="text-[10px]">
+            — default OFF. The mid-task &ldquo;what were you thinking&rdquo;
+            prompt is a reactive retrospective probe (Fox/Ericsson/Best 2011)
+            that contaminates the process measure. Leave off for
+            process-fidelity runs; enable only when the DV is learning gains.
+            Off → each scenario is one read-and-revise screen.
+          </span>
+        </span>
+      </label>
 
       <PerScenarioRetrospectiveEditor
         questions={m.perScenarioRetrospective ?? []}
@@ -1381,6 +1482,29 @@ function TaskExampleEditor({
           onChange={(e) => set('title', e.target.value)}
         />
       </FieldLabel>
+
+      <label className="flex items-start gap-2 text-sm cursor-pointer select-none border border-dashed border-[var(--rule)] p-3">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={!!m.singleScreen}
+          onChange={(e) =>
+            patch((mod) => {
+              if (mod.type !== 'task_example') return;
+              if (e.target.checked) mod.singleScreen = true;
+              else delete mod.singleScreen;
+            })
+          }
+        />
+        <span className="text-[var(--muted)]">
+          Single-screen demo{' '}
+          <span className="text-[10px]">
+            — show requirements, the first scenario, and the prefilled spec on
+            ONE consolidated screen (instead of the multi-screen walkthrough).
+            Uses scenario 1 + its after-read prefill.
+          </span>
+        </span>
+      </label>
 
       <FieldLabel
         label="Researcher narration (shown on the intro screen)"

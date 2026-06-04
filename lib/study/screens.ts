@@ -4,6 +4,8 @@ export type ScreenKind =
   | 'pre_system'
   | 'login'
   | 'questionnaire'
+  // Generic instruction interstitial
+  | 'instructions'
   // Think-aloud worked-example module (display-only)
   | 'warmup_example_intro'
   | 'warmup_example_body'
@@ -18,6 +20,7 @@ export type ScreenKind =
   | 'task_example_scenario_read'
   | 'task_example_scenario_ponder'
   | 'task_example_scenario_revise'
+  | 'task_example_single' // consolidated single-screen demo
   // Task / task_warmup (real)
   | 'task_intro'
   | 'task_context'
@@ -26,6 +29,7 @@ export type ScreenKind =
   | 'task_scenario_ponder'
   | 'task_scenario_revise'
   | 'task_scenario_retro' // per-scenario retrospective question (repeats each scenario)
+  | 'task_outro' // "done with this task" screen
   // Standalone retrospective report: one screen per question
   | 'retrospective_question';
 
@@ -47,17 +51,10 @@ export type Screen = {
   summary: string;
 };
 
-const TASK_STEPS_BASE: ScreenKind[] = [
-  'task_intro',
-  'task_context',
-  'task_initial_spec',
-];
-
-const TASK_STEPS_PER_SCENARIO: ScreenKind[] = [
-  'task_scenario_read',
-  'task_scenario_ponder',
-  'task_scenario_revise',
-];
+// Requirements are shown ONCE, on the initial-spec screen (no separate
+// requirements-only screen). `task_context` is retained in the union for
+// back-compat but no longer enumerated.
+const TASK_STEPS_BASE: ScreenKind[] = ['task_intro', 'task_initial_spec'];
 
 const TASK_EXAMPLE_STEPS_PER_SCENARIO: ScreenKind[] = [
   'task_example_scenario_read',
@@ -81,6 +78,8 @@ export function labelFor(kind: ScreenKind): string {
       return 'Login / Register';
     case 'questionnaire':
       return 'Questionnaire';
+    case 'instructions':
+      return 'Instructions';
     case 'warmup_example_intro':
       return 'Intro';
     case 'warmup_example_body':
@@ -103,20 +102,24 @@ export function labelFor(kind: ScreenKind): string {
       return 'Scenario ponder';
     case 'task_example_scenario_revise':
       return 'Scenario revise';
+    case 'task_example_single':
+      return 'Demo';
     case 'task_intro':
       return 'Intro';
     case 'task_context':
       return 'Context';
     case 'task_initial_spec':
-      return 'Initial spec';
+      return 'Requirements & spec';
     case 'task_scenario_read':
-      return 'Scenario read';
+      return 'Scenario';
     case 'task_scenario_ponder':
       return 'Scenario ponder';
     case 'task_scenario_revise':
       return 'Scenario revise';
     case 'task_scenario_retro':
       return 'Scenario retrospective';
+    case 'task_outro':
+      return 'Done';
     case 'retrospective_question':
       return 'Retrospective';
   }
@@ -164,6 +167,11 @@ export function enumerateScreens(content: ProjectContent): Screen[] {
         ...extra,
       });
 
+    if (m.type === 'instructions') {
+      push('instructions', { summary: snippet(m.body || m.title) });
+      return;
+    }
+
     if (m.type === 'think_aloud_example') {
       push('warmup_example_intro');
       push('warmup_example_body', {
@@ -187,6 +195,18 @@ export function enumerateScreens(content: ProjectContent): Screen[] {
     }
 
     if (m.type === 'task_example') {
+      // Single-screen demo: one consolidated screen (requirements + first
+      // scenario + prefilled spec). Otherwise the multi-screen walkthrough.
+      if (m.singleScreen) {
+        push('task_example_single', {
+          summary: snippet(
+            m.scenarios[0]?.clauses.map((c) => `${c.type} ${c.text}`).join('; ') ||
+              m.prefilled.initial.spec ||
+              '',
+          ),
+        });
+        return;
+      }
       push('task_example_intro');
       push('task_example_initial_spec', {
         summary: snippet(m.prefilled.initial.spec || m.initialSpec[0]?.prompt || ''),
@@ -207,16 +227,19 @@ export function enumerateScreens(content: ProjectContent): Screen[] {
       TASK_STEPS_BASE.forEach((kind) => {
         push(kind, {
           summary:
-            kind === 'task_context'
-              ? snippet(m.studyContext)
-              : kind === 'task_initial_spec'
+            kind === 'task_initial_spec'
               ? snippet(m.initialSpec[0]?.prompt ?? '')
               : title,
         });
       });
       const retro = m.perScenarioRetrospective ?? [];
+      // Per-scenario screens: a single read-and-revise screen by default;
+      // when the recall probe is enabled, the read → ponder → revise trio.
+      const perScenario: ScreenKind[] = m.enableRecallProbe
+        ? ['task_scenario_read', 'task_scenario_ponder', 'task_scenario_revise']
+        : ['task_scenario_read'];
       m.scenarios.forEach((sc, idx) => {
-        TASK_STEPS_PER_SCENARIO.forEach((kind) => {
+        perScenario.forEach((kind) => {
           push(kind, {
             idx,
             label: `${title} · ${labelFor(kind)} (${sc.title})`,
@@ -233,6 +256,11 @@ export function enumerateScreens(content: ProjectContent): Screen[] {
           });
         });
       });
+      // Optional "done with this task" outro.
+      const c = m.copy;
+      if (c?.outroTitle?.trim() || c?.outroBody?.trim()) {
+        push('task_outro', { summary: snippet(c.outroTitle || c.outroBody || '') });
+      }
       return;
     }
 
@@ -253,6 +281,8 @@ export function enumerateScreens(content: ProjectContent): Screen[] {
 // screens.ts doesn't depend on MODULE_TYPE_LABEL's exact wording.
 function labelForModuleType(type: Module['type']): string {
   switch (type) {
+    case 'instructions':
+      return 'Instructions';
     case 'think_aloud_warmup':
       return 'Think-aloud warmup';
     case 'think_aloud_example':

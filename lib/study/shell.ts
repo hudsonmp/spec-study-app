@@ -9,6 +9,14 @@ export function shellProjectContent(): ProjectContent {
   return {
     modules: [
       {
+        // General instructions interstitial (also reusable as "task
+        // instructions" — add another `instructions` module before the task).
+        id: uid(),
+        type: 'instructions',
+        title: '<title for the general instructions>',
+        body: '<the instructions shown to the participant before the study begins>',
+      },
+      {
         id: uid(),
         type: 'think_aloud_warmup',
         title: '<title for the think-aloud warmup>',
