@@ -49,6 +49,7 @@ import {
   participantLogoutAction,
 } from '@/app/study/actions';
 import { saveProjectAction } from '@/app/create/formative/actions';
+import { upsertScriptAction } from '@/app/create/script/actions';
 import MapCanvas from '@/components/MapCanvas';
 
 // =============================== Save adapter ==============================
@@ -737,6 +738,9 @@ function PreviewParticipantFlow({
         rail={
           scripts ? (
             <ScriptRail
+              key={screen.key}
+              projectId={project.id}
+              screenKey={screen.key}
               screenId={screenId}
               script={scripts[screen.key] ?? ''}
               referenceScript={referenceScript}
@@ -800,16 +804,46 @@ function EditToggle({
 // Per-screen researcher script (top) + collapsible SIGCSE reference (below).
 // Mirrors the old Follow-along rail but lives inside the preview so the
 // researcher reads the script while watching the real participant screen.
+// Mounted with key={screen.key}, so it remounts per screen → the textarea
+// seeds fresh from the current screen's script. Edits debounce-save to
+// study_scripts via upsertScriptAction (researcher is authenticated in the
+// preview). This is the same per-(study, screen_key) row the /create/script
+// editor writes, so the two surfaces stay in sync.
 function ScriptRail({
+  projectId,
+  screenKey,
   screenId,
   script,
   referenceScript,
 }: {
+  projectId: string;
+  screenKey: string;
   screenId: string;
   script: string;
   referenceScript: string;
 }) {
   const [refOpen, setRefOpen] = useState(false);
+  const [draft, setDraft] = useState(script);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function onChange(v: string) {
+    setDraft(v);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      void upsertScriptAction({
+        studyId: projectId,
+        screenKey,
+        scriptText: v,
+      })
+        .then((res) => {
+          if (res.ok)
+            setSavedAt(new Date().toLocaleTimeString([], { hour12: false }));
+        })
+        .catch(() => {});
+    }, 800);
+  }
+
   return (
     <aside className="h-full overflow-y-auto bg-[var(--panel)] p-4">
       <div className="flex items-baseline gap-2 mb-2">
@@ -819,18 +853,18 @@ function ScriptRail({
         <span className="text-xs uppercase tracking-wider text-[var(--muted)]">
           Researcher script
         </span>
+        {savedAt && (
+          <span className="text-[10px] italic text-[var(--muted)] ml-auto">
+            saved {savedAt}
+          </span>
+        )}
       </div>
-      {script ? (
-        <p className="whitespace-pre-wrap leading-relaxed mb-6">{script}</p>
-      ) : (
-        <p className="italic text-[var(--muted)] mb-6">
-          No script for this screen yet.{' '}
-          <Link href="/create/script" className="underline hover:no-underline">
-            Add one
-          </Link>
-          .
-        </p>
-      )}
+      <textarea
+        value={draft}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Write the script for this screen — what you say/do here. Saves automatically."
+        className="w-full min-h-[12rem] border border-[var(--rule)] bg-white p-2 text-sm leading-relaxed resize-y focus:outline-none focus:border-[var(--accent)] mb-6"
+      />
       {referenceScript && (
         <details
           open={refOpen}
