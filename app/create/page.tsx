@@ -1,64 +1,58 @@
 import Link from 'next/link';
-import { createServiceRoleClient } from '@/lib/supabase/service';
-import FieldsEditor from './FieldsEditor';
-import {
-  addFieldAction,
-  researcherLogoutAction,
-} from './actions';
+import CreateNav from './CreateNav';
 
 export const dynamic = 'force-dynamic';
 
-export default async function CreatePage() {
-  const supabase = createServiceRoleClient();
-  const { data: fields } = await supabase
-    .from('onboarding_fields')
-    .select('id, field_key, label, type, options, position')
-    .order('position', { ascending: true });
+type Card = { href: string; title: string; blurb: string };
 
+const CARDS: Card[] = [
+  {
+    href: '/create/questionnaire',
+    title: 'Questionnaire',
+    blurb:
+      'Author the screening + onboarding questions participants see at /onboard.',
+  },
+  {
+    href: '/create/formative',
+    title: 'Protocol',
+    blurb:
+      'Author the study packet: modules, requirements, scenarios, retrospective.',
+  },
+  {
+    href: '/create/script',
+    title: 'Script',
+    blurb:
+      'Write a researcher script for every participant screen; run a live follow-along.',
+  },
+];
+
+export default function CreateHub() {
   return (
     <main className="flex-1 px-6 py-10 max-w-3xl mx-auto w-full">
-      <header className="border-b border-[var(--rule)] pb-4 mb-8 flex items-baseline justify-between">
-        <div>
-          <h1 className="text-2xl font-medium tracking-tight">
-            Onboarding form builder
-          </h1>
-          <p className="text-sm text-[var(--muted)] mt-1">
-            Each field becomes a question on <code>/onboard</code>. Changes are
-            saved per field on blur.
-          </p>
-        </div>
-        <nav className="flex gap-4 text-sm">
-          <Link
-            href="/create/formative"
-            className="underline hover:no-underline"
-          >
-            Formative study
-          </Link>
-          <form action={researcherLogoutAction}>
-            <button
-              type="submit"
-              className="text-[var(--muted)] hover:text-[var(--foreground)] underline hover:no-underline"
-            >
-              Log out
-            </button>
-          </form>
-        </nav>
+      <CreateNav current="hub" />
+      <header className="pb-4 mb-10">
+        <h1 className="text-2xl font-medium tracking-tight">
+          Research console
+        </h1>
+        <p className="text-sm text-[var(--muted)] mt-1">
+          Choose what you want to author or run.
+        </p>
       </header>
 
-      <FieldsEditor fields={fields ?? []} />
-
-      <form action={addFieldAction} className="mt-6">
-        <button
-          type="submit"
-          className="border border-dashed border-[var(--rule)] text-[var(--muted)] italic px-4 py-2 hover:text-[var(--foreground)] hover:border-[var(--foreground)] transition"
-        >
-          + add question
-        </button>
-      </form>
-
-      <p className="text-xs text-[var(--muted)] italic mt-10">
-        Field order on the participant form follows the position you set here.
-      </p>
+      <div className="grid sm:grid-cols-3 gap-4">
+        {CARDS.map((c) => (
+          <Link
+            key={c.href}
+            href={c.href}
+            className="border border-[var(--rule)] bg-[var(--panel)] p-5 hover:border-[var(--foreground)] transition flex flex-col gap-2"
+          >
+            <h2 className="text-lg font-medium tracking-tight">{c.title}</h2>
+            <p className="text-sm text-[var(--muted)] leading-relaxed flex-1">
+              {c.blurb}
+            </p>
+          </Link>
+        ))}
+      </div>
     </main>
   );
 }

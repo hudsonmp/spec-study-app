@@ -7,7 +7,7 @@ import { OTHER_VALUE, parseOptions } from '@/lib/onboarding/options';
 
 type Field = Pick<
   Database['public']['Tables']['onboarding_fields']['Row'],
-  'id' | 'field_key' | 'label' | 'type' | 'options' | 'position'
+  'id' | 'field_key' | 'label' | 'type' | 'options' | 'position' | 'required'
 >;
 
 const inputBase =
@@ -32,6 +32,7 @@ function SingleSelectField({ field }: { field: Field }) {
               <input
                 type="radio"
                 name={`ui_${field.id}`}
+                required={field.required}
                 checked={checked}
                 onChange={() => setSelected(o.value)}
               />
@@ -77,6 +78,15 @@ function MultiSelectField({ field }: { field: Field }) {
 
   return (
     <div className="space-y-1.5">
+      <input
+        type="text"
+        required={field.required}
+        tabIndex={-1}
+        aria-hidden
+        className="sr-only"
+        value={selectedConcrete.length > 0 || otherFinal ? 'ok' : ''}
+        onChange={() => {}}
+      />
       {selectedConcrete.map((v) => (
         <input
           key={`hid-${v}`}
@@ -121,18 +131,20 @@ function MultiSelectField({ field }: { field: Field }) {
 
 function FieldInput({ field }: { field: Field }) {
   const name = `f_${field.id}`;
+  const req = field.required;
   switch (field.type) {
     case 'short_text':
-      return <input type="text" name={name} className={inputBase} />;
+      return <input type="text" name={name} required={req} className={inputBase} />;
     case 'long_text':
       return (
-        <textarea name={name} rows={4} className={`${inputBase} resize-y`} />
+        <textarea name={name} rows={4} required={req} className={`${inputBase} resize-y`} />
       );
     case 'number':
       return (
         <input
           type="number"
           name={name}
+          required={req}
           className={`${inputBase} font-mono`}
           step="any"
         />
@@ -167,6 +179,15 @@ export default function OnboardForm({ fields }: { fields: Field[] }) {
         <div key={f.id}>
           <div className="text-xs uppercase tracking-wider text-[var(--muted)] mb-2 block">
             {f.label}
+            {f.required ? (
+              <span className="text-[var(--danger)] ml-1" aria-label="required">
+                *
+              </span>
+            ) : (
+              <span className="ml-2 lowercase tracking-normal italic text-[10px]">
+                (optional)
+              </span>
+            )}
           </div>
           <FieldInput field={f} />
         </div>

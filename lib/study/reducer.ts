@@ -2,8 +2,13 @@ import type {
   ProjectContent,
   Module,
   TaskContent,
+  TaskExample,
+  ThinkAloudExample,
+  ThinkAloudWarmupModule,
+  ThinkAloudExampleModule,
+  TaskExampleModule,
 } from '@/lib/types/study';
-import { emptyContent } from '@/lib/types/study';
+import { emptyContent, uid } from '@/lib/types/study';
 
 export type ContentAction =
   | { type: 'set'; content: ProjectContent }
@@ -19,21 +24,98 @@ export function contentReducer(
   return draft;
 }
 
-// Lightweight migration: handle legacy authored_data shapes by collapsing
-// them into the new modules array. If anything looks recognizable from the
-// old templates+domains shape, we keep it as best-effort. Otherwise we
-// return an empty project content.
+// Legacy module shapes carried an optional `example` sub-field. These two
+// aliases let migrateModule read it before it's stripped.
+type LegacyWarmup = ThinkAloudWarmupModule & { example?: ThinkAloudExample };
+type LegacyTaskWarmup = TaskContent & {
+  id: string;
+  type: 'task_warmup';
+  example?: TaskExample;
+};
+
+const EMPTY_PREFILLED: TaskExample['prefilled'] = {
+  initial: { spec: '', entities: [] },
+  perScenario: [],
+};
+
+// Split a single (possibly legacy) module into one or more current-shape
+// modules. A legacy `example` sub-field becomes a standalone worked-example
+// module inserted IMMEDIATELY BEFORE its parent, preserving sequence and all
+// authored content. Lossless: nothing is dropped, only re-homed.
+function migrateModule(m: Module): Module[] {
+  if (m.type === 'think_aloud_warmup') {
+    const w = m as LegacyWarmup;
+    const out: Module[] = [];
+    if (w.example) {
+      const ex = w.example;
+      const exampleModule: ThinkAloudExampleModule = {
+        id: uid(),
+        type: 'think_aloud_example',
+        title: w.title ? `${w.title} — worked example` : 'Worked example',
+        taskDescription: ex.altTaskDescription ?? '',
+        body: ex.altBody ?? '',
+        revealedTask: ex.altRevealedTask ?? '',
+        revealedAnswer: '',
+        walkthroughText: ex.walkthroughText ?? '',
+      };
+      out.push(exampleModule);
+    }
+    // Strip the legacy example field and backfill required string fields.
+    const { example: _drop, ...rest } = w;
+    void _drop;
+    const warmup: ThinkAloudWarmupModule = {
+      ...rest,
+      revealedTask:
+        typeof rest.revealedTask === 'string' ? rest.revealedTask : '',
+      revealedAnswer:
+        typeof rest.revealedAnswer === 'string' ? rest.revealedAnswer : '',
+    };
+    out.push(warmup);
+    return out;
+  }
+
+  if (m.type === 'task_warmup') {
+    const w = m as LegacyTaskWarmup;
+    const out: Module[] = [];
+    if (w.example) {
+      const ex = w.example;
+      const exampleModule: TaskExampleModule = {
+        ...ex,
+        prefilled: ex.prefilled ?? EMPTY_PREFILLED,
+        id: uid(),
+        type: 'task_example',
+        title:
+          ex.title ||
+          (w.title ? `${w.title} — worked example` : 'Worked example task'),
+        walkthroughText: '',
+      };
+      out.push(exampleModule);
+    }
+    const { example: _drop, ...rest } = w;
+    void _drop;
+    out.push(rest as Module);
+    return out;
+  }
+
+  // All current-shape modules (incl. think_aloud_example / task_example /
+  // task / retrospective_report) pass through unchanged.
+  return [m];
+}
+
+// Migration: handle legacy authored_data shapes by normalizing them into the
+// current modules array. Splits any legacy `example` sub-field into its own
+// module. Unknown shapes return empty content.
 export function migrateContent(input: unknown): ProjectContent {
   if (!input || typeof input !== 'object') return emptyContent();
   const obj = input as Record<string, unknown>;
 
   // New shape: { modules: [...] }
   if (Array.isArray(obj.modules)) {
-    return { modules: obj.modules as Module[] };
+    const modules = (obj.modules as Module[]).flatMap(migrateModule);
+    return { modules };
   }
 
-  // Legacy shape: { templates, domains } — convert each domain to a Task
-  // module, drop the templates wrapper.
+  // Legacy shape: { templates, domains } — no longer supported; start clean.
   return emptyContent();
 }
 

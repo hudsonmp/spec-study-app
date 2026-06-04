@@ -19,7 +19,7 @@ export { OTHER_VALUE };
 
 type Field = Pick<
   Database['public']['Tables']['onboarding_fields']['Row'],
-  'id' | 'field_key' | 'label' | 'type' | 'options' | 'position'
+  'id' | 'field_key' | 'label' | 'type' | 'options' | 'position' | 'required'
 >;
 
 function slugify(s: string): string {
@@ -37,7 +37,10 @@ function dedupeValues(opts: Option[]): Option[] {
     const base = o.value || slugify(o.label);
     const n = (seen.get(base) ?? 0) + 1;
     seen.set(base, n);
-    return { value: n === 1 ? base : `${base}_${n}`, label: o.label };
+    // Spread first so per-option flags (terminator) survive — only value is
+    // rewritten for de-duplication. Dropping `...o` here silently strips the
+    // terminator selection on every save.
+    return { ...o, value: n === 1 ? base : `${base}_${n}`, label: o.label };
   });
 }
 
@@ -48,6 +51,7 @@ type DraftField = {
   type: Field['type'];
   position: number;
   options: Option[];
+  required: boolean;
 };
 
 function FieldCard({
@@ -66,6 +70,7 @@ function FieldCard({
     type: field.type,
     position: field.position,
     options: parseOptions(field.options),
+    required: field.required,
   });
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +96,8 @@ function FieldCard({
     fd.set('field_key', next.field_key);
     fd.set('label', next.label);
     fd.set('type', next.type);
+    // Only set `required` when true — the server treats key-absent as optional.
+    if (next.required) fd.set('required', '1');
     if (next.type === 'select' || next.type === 'multi_select') {
       fd.set('options', JSON.stringify(dedupeValues(next.options)));
     }
@@ -290,6 +297,20 @@ function FieldCard({
           </select>
         </label>
       </div>
+
+      <label className="flex items-center gap-2 mb-3 text-sm cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={draft.required}
+          onChange={(e) => save(patchDraft({ required: e.target.checked }))}
+        />
+        <span className="text-[var(--muted)]">
+          Required{' '}
+          <span className="text-[10px]">
+            (participant must answer this question to continue)
+          </span>
+        </span>
+      </label>
 
       <label className="block mb-3">
         <span className="text-xs text-[var(--muted)]">

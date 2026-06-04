@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { listProjects } from '../actions';
-import ParticipantFlow from './ParticipantFlow';
+import { listScriptsForStudy } from '../../script/actions';
+import { SIGCSE_THINK_ALOUD_PROTOCOL } from '@/lib/scripts/sigcse-doc';
+import PreviewBrowser from './PreviewBrowser';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,5 +33,15 @@ export default async function PreviewPage(props: {
     );
   }
 
-  return <ParticipantFlow project={active} />;
+  // Per-screen researcher scripts back the merged script rail.
+  const scripts = await listScriptsForStudy(active.id);
+
+  return (
+    <PreviewBrowser
+      project={active}
+      allProjects={projects}
+      scripts={scripts}
+      referenceScript={SIGCSE_THINK_ALOUD_PROTOCOL}
+    />
+  );
 }

@@ -58,7 +58,7 @@ export async function addFieldAction(): Promise<void> {
     position: nextPos,
   });
   if (error) throw error;
-  revalidatePath('/create');
+  revalidatePath('/create/questionnaire');
 }
 
 const updateSchema = z.object({
@@ -67,6 +67,8 @@ const updateSchema = z.object({
   label: z.string().trim().min(1).max(200),
   type: z.enum(['short_text', 'long_text', 'select', 'multi_select', 'number']),
   options: z.string().max(8000).optional().default(''),
+  // Checkbox: present (any value) → required; absent → optional.
+  required: z.coerce.boolean().optional().default(false),
 });
 
 export async function updateFieldAction(formData: FormData): Promise<void> {
@@ -77,6 +79,8 @@ export async function updateFieldAction(formData: FormData): Promise<void> {
     label: formData.get('label'),
     type: formData.get('type'),
     options: formData.get('options') ?? '',
+    // A checkbox only appears in FormData when checked; normalize to boolean.
+    required: formData.get('required') != null,
   });
   if (!parsed.success) throw new Error(parsed.error.message);
 
@@ -94,11 +98,12 @@ export async function updateFieldAction(formData: FormData): Promise<void> {
       label: parsed.data.label,
       type: t,
       options,
+      required: parsed.data.required,
       updated_at: new Date().toISOString(),
     })
     .eq('id', parsed.data.id);
   if (error) throw error;
-  revalidatePath('/create');
+  revalidatePath('/create/questionnaire');
 }
 
 export async function duplicateFieldAction(formData: FormData): Promise<void> {
@@ -109,7 +114,7 @@ export async function duplicateFieldAction(formData: FormData): Promise<void> {
 
   const { data: src, error: getErr } = await supabase
     .from('onboarding_fields')
-    .select('field_key, label, type, options')
+    .select('field_key, label, type, options, required')
     .eq('id', id)
     .single();
   if (getErr) throw getErr;
@@ -127,10 +132,11 @@ export async function duplicateFieldAction(formData: FormData): Promise<void> {
     label: src.label + ' (copy)',
     type: src.type,
     options: src.options,
+    required: src.required,
     position: nextPos,
   });
   if (insErr) throw insErr;
-  revalidatePath('/create');
+  revalidatePath('/create/questionnaire');
 }
 
 export async function deleteFieldAction(formData: FormData): Promise<void> {
@@ -143,7 +149,7 @@ export async function deleteFieldAction(formData: FormData): Promise<void> {
     .delete()
     .eq('id', id);
   if (error) throw error;
-  revalidatePath('/create');
+  revalidatePath('/create/questionnaire');
 }
 
 export async function moveFieldAction(formData: FormData): Promise<void> {
@@ -185,7 +191,7 @@ export async function moveFieldAction(formData: FormData): Promise<void> {
     .eq('id', a.id);
   if (e3) throw e3;
 
-  revalidatePath('/create');
+  revalidatePath('/create/questionnaire');
 }
 
 export async function researcherLogoutAction(): Promise<void> {

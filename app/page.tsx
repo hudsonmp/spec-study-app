@@ -1,10 +1,91 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
+import { getResearcherSession } from '@/lib/auth/researcher';
 
 export default async function Home() {
-  const user = await getCurrentUser();
-  if (user) {
+  const [user, researcher] = await Promise.all([
+    getCurrentUser(),
+    getResearcherSession(),
+  ]);
+  const isResearcher = researcher.ok === true;
+  const isParticipant = user !== null;
+
+  // Researcher session present → always show the picker so the researcher
+  // can hop into /create or pilot the participant flow without getting
+  // bounced back to /create. The participant card adapts: continue when
+  // a participant cookie is also set, register/login otherwise.
+  if (isResearcher) {
+    return (
+      <main className="flex-1 flex items-center justify-center px-6 py-16">
+        <div className="max-w-xl w-full">
+          <header className="border-b border-[var(--rule)] pb-4 mb-8">
+            <h1 className="text-2xl font-medium tracking-tight">
+              Which side?
+            </h1>
+            <p className="text-sm text-[var(--muted)] mt-1">
+              You&rsquo;re signed in as researcher. Open the console or
+              walk through the study as a participant.
+            </p>
+          </header>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Link
+              href="/create"
+              className="border border-[var(--foreground)] p-5 hover:bg-[var(--foreground)] hover:text-[var(--background)] transition flex flex-col gap-2"
+            >
+              <span className="text-lg font-medium tracking-tight">
+                Researcher
+              </span>
+              <span className="text-sm opacity-80">
+                Console: questionnaire, protocol, script, walkthrough.
+              </span>
+            </Link>
+            {isParticipant ? (
+              <Link
+                href={user.has_onboarded ? '/study' : '/onboard'}
+                className="border border-[var(--foreground)] p-5 hover:bg-[var(--foreground)] hover:text-[var(--background)] transition flex flex-col gap-2"
+              >
+                <span className="text-lg font-medium tracking-tight">
+                  Participant
+                </span>
+                <span className="text-sm opacity-80">
+                  Continue as {user.first_name} (PID {user.pid}).
+                </span>
+              </Link>
+            ) : (
+              <div className="border border-[var(--foreground)] p-5 flex flex-col gap-2">
+                <span className="text-lg font-medium tracking-tight">
+                  Participant
+                </span>
+                <span className="text-sm opacity-80">
+                  Pilot the study as a participant.
+                </span>
+                <div className="grid grid-cols-2 gap-2 pt-2">
+                  <Link
+                    href="/register"
+                    className="text-center border border-[var(--foreground)] py-2 text-sm hover:bg-[var(--foreground)] hover:text-[var(--background)] transition"
+                  >
+                    Register
+                  </Link>
+                  <Link
+                    href="/login"
+                    className="text-center border border-[var(--foreground)] py-2 text-sm hover:bg-[var(--foreground)] hover:text-[var(--background)] transition"
+                  >
+                    Log in
+                  </Link>
+                </div>
+              </div>
+            )}
+          </div>
+
+        </div>
+      </main>
+    );
+  }
+
+  // Participant-only — auto-route to their next screen.
+  if (isParticipant) {
     redirect(user.has_onboarded ? '/study' : '/onboard');
   }
 

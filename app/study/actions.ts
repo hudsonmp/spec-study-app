@@ -103,6 +103,65 @@ export async function upsertResponseAction(input: {
   return { ok: true };
 }
 
+// Per-(participant, module, scenario, phase) snapshot of the spec + entity
+// table. Unlike the rolling `:current` response row (which a later scenario
+// overwrites) and the `spec_snapshot` event (buried in payload JSON), this
+// writes a queryable row — one per scenario boundary — so post-hoc process
+// coding can read the spec's evolution across scenarios directly. Append-only.
+const snapshotSchema = z.object({
+  moduleId: z.string().min(1),
+  scenarioIdx: z.number().int().nullable(),
+  phase: z.enum(['initial', 'after_scenario', 'final']),
+  spec: z.string().max(50_000),
+  entities: z.string().max(200_000), // JSON-encoded Entity[]
+  clientTs: z.string().max(40).optional(),
+  skipPersist: z.boolean().optional(),
+});
+
+export async function recordSnapshotAction(input: {
+  moduleId: string;
+  scenarioIdx: number | null;
+  phase: 'initial' | 'after_scenario' | 'final';
+  spec: string;
+  entities: string;
+  clientTs?: string;
+  skipPersist?: boolean;
+}): Promise<{ ok: boolean }> {
+  const parsed = snapshotSchema.safeParse(input);
+  if (!parsed.success) return { ok: false };
+  if (parsed.data.skipPersist) return { ok: true };
+
+  const user = await getCurrentUser();
+  if (!user) return { ok: false };
+  const studyId = await getShownProjectId();
+  if (!studyId) return { ok: false };
+
+  let entitiesJson: Json = [];
+  try {
+    entitiesJson = JSON.parse(parsed.data.entities) as Json;
+  } catch {
+    entitiesJson = [];
+  }
+
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase.from('study_snapshots').insert({
+    user_id: user.id,
+    study_id: studyId,
+    module_id: parsed.data.moduleId,
+    scenario_idx: parsed.data.scenarioIdx,
+    phase: parsed.data.phase,
+    spec: parsed.data.spec,
+    entities: entitiesJson,
+    client_ts: parsed.data.clientTs ?? null,
+  });
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.error('[study] recordSnapshot failed:', error.message);
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
 // Sign-out: destroy the participant session and redirect home.
 export async function participantLogoutAction(): Promise<void> {
   const session = await getParticipantSession();
