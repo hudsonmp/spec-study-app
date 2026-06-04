@@ -1689,6 +1689,8 @@ function TaskRunner({
           setRetroAnswer(answerKey, v);
           save.upsert(`scenario_retro:${answerKey}`, v);
         }}
+        spec={spec}
+        entities={entities}
         onContinue={next}
         continueLabel={
           isLastQuestion && isLastScenario
@@ -2399,6 +2401,8 @@ function ScenarioRetroStep({
   totalQuestions,
   value,
   onChange,
+  spec,
+  entities,
   onContinue,
   continueLabel,
 }: {
@@ -2411,29 +2415,50 @@ function ScenarioRetroStep({
   totalQuestions: number;
   value: string;
   onChange: (v: string) => void;
+  // The participant's spec + entity table, shown read-only (locked) beside the
+  // retrospective question so they can reference what they wrote.
+  spec: string;
+  entities: Entity[];
   onContinue: () => void;
   continueLabel: string;
 }) {
   return (
-    <div className="flex-1 flex justify-center overflow-hidden min-h-0">
-      <section className="max-w-2xl w-full flex flex-col gap-4 overflow-y-auto pr-1">
-        <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
-          {scenarioTitle} · Scenario {scenarioIdx + 1} of {totalScenarios} ·
-          Retrospective Q{questionIdx + 1} of {totalQuestions}
-        </p>
-        <p className="text-lg leading-relaxed whitespace-pre-wrap">{question}</p>
-        <textarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-full border border-[var(--rule)] p-3 bg-[var(--panel)] focus:outline-none focus:border-[var(--accent)] leading-relaxed resize-y"
-          style={{ minHeight: `${Math.max(boxHeight, 1) * 80}px` }}
-          placeholder="Reflect on your reasoning…"
+    <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
+      <Panel defaultSize="50%" minSize="30%" maxSize="70%">
+        <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
+            {scenarioTitle} · Scenario {scenarioIdx + 1} of {totalScenarios} ·
+            Retrospective Q{questionIdx + 1} of {totalQuestions}
+          </p>
+          <p className="text-lg leading-relaxed whitespace-pre-wrap">
+            {question}
+          </p>
+          <textarea
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full border border-[var(--rule)] p-3 bg-[var(--panel)] focus:outline-none focus:border-[var(--accent)] leading-relaxed resize-y"
+            style={{ minHeight: `${Math.max(boxHeight, 1) * 80}px` }}
+            placeholder="Reflect on your reasoning…"
+          />
+          <div className="pt-2">
+            <ContinueButton onClick={onContinue} label={continueLabel} />
+          </div>
+        </section>
+      </Panel>
+      <SplitHandle />
+      <Panel defaultSize="50%" minSize="30%" maxSize="70%">
+        <SpecColumn
+          spec={spec}
+          setSpec={() => {}}
+          entities={entities}
+          setEntities={() => {}}
+          specSavedAt={null}
+          entitiesSavedAt={null}
+          readOnly
+          headerNote="Your specification (locked during retrospective)"
         />
-        <div className="pt-2">
-          <ContinueButton onClick={onContinue} label={continueLabel} />
-        </div>
-      </section>
-    </div>
+      </Panel>
+    </PanelGroup>
   );
 }
 
