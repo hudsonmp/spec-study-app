@@ -2124,15 +2124,21 @@ function SeededMarkerEditor({
           <span className="text-xs text-[var(--muted)]">
             {m.kind === 'vehicle'
               ? `Veh ${VEHICLE_COLOR_TO_NUMBER[m.color]}`
-              : `Person ${m.letter}`}
+              : `Rider ${m.letter} · dropoff`}
           </span>
-          <span
-            className="h-4 w-4 inline-block border border-[var(--rule)]"
-            style={{
-              background:
-                m.kind === 'vehicle' ? VEHICLE_HEX[m.color] : m.personColor,
-            }}
-          />
+          {m.kind === 'vehicle' ? (
+            <span
+              className="h-4 w-4 inline-block border border-[var(--rule)]"
+              style={{ background: VEHICLE_HEX[m.color] }}
+            />
+          ) : (
+            // Rider dropoff renders as an X in the rider's colour (matches the
+            // participant map).
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-label="dropoff X">
+              <line x1="3" y1="3" x2="13" y2="13" stroke={m.personColor} strokeWidth="2.5" strokeLinecap="round" />
+              <line x1="3" y1="13" x2="13" y2="3" stroke={m.personColor} strokeWidth="2.5" strokeLinecap="round" />
+            </svg>
+          )}
           <select
             value={m.landmarkLabel}
             onChange={(e) =>
@@ -2170,7 +2176,7 @@ function SeededMarkerEditor({
           disabled={availablePeople.length === 0}
           className="text-xs italic text-[var(--muted)] hover:text-[var(--foreground)] border border-dashed border-[var(--rule)] px-2 py-1 disabled:opacity-30"
         >
-          + person ({availablePeople.length} left)
+          + rider dropoff ({availablePeople.length} left)
         </button>
       </div>
     </div>
