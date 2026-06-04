@@ -1,6 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ElementType,
+} from 'react';
 import Link from 'next/link';
 import {
   Group as PanelGroup,
@@ -11,6 +20,7 @@ import { enumerateScreens, type Screen } from '@/lib/study/screens';
 import type {
   LoadedProject,
   Module,
+  ProjectContent,
   TaskContent,
   TaskExample,
   TaskExampleModule,
@@ -36,6 +46,7 @@ import {
   finishStudyAction,
   participantLogoutAction,
 } from '@/app/study/actions';
+import { saveProjectAction } from '@/app/create/formative/actions';
 import MapCanvas from '@/components/MapCanvas';
 
 // =============================== Save adapter ==============================
@@ -261,6 +272,79 @@ function useDebouncedSave(value: string, save: (v: string) => void, ms = 1000) {
   }, [value, ms]);
 }
 
+// ===================== Inline copy editing (preview) =====================
+// In preview mode the researcher can toggle "Edit text" and click any
+// participant-facing copy string to edit it in place. Edits commit on blur
+// (never on keystroke — see EditableText) and route to a module mutation that
+// patches the live ProjectContent and debounce-persists via saveProjectAction.
+
+type EditAPI = {
+  enabled: boolean;
+  // Apply an immutable patch to the module with the given id.
+  editModule: (moduleId: string, mutate: (m: Module) => void) => void;
+};
+
+const EditContext = createContext<EditAPI>({
+  enabled: false,
+  editModule: () => {},
+});
+
+function useEdit() {
+  return useContext(EditContext);
+}
+
+// Inline-editable text node. When editing is disabled (live /study, or toggle
+// off) it renders as a plain element. When enabled it becomes contentEditable
+// with a dashed outline; on blur it commits the new textContent if changed.
+function EditableText({
+  value,
+  onCommit,
+  as = 'span',
+  className = '',
+  placeholder = '(empty — click to add)',
+}: {
+  value: string;
+  onCommit: (next: string) => void;
+  as?: ElementType;
+  className?: string;
+  placeholder?: string;
+}) {
+  const { enabled } = useEdit();
+  const Tag = as;
+  if (!enabled) {
+    return <Tag className={className}>{value}</Tag>;
+  }
+  const empty = value.length === 0;
+  return (
+    <Tag
+      className={
+        className +
+        ' outline-dashed outline-1 outline-offset-2 outline-[var(--accent)]/40 hover:outline-[var(--accent)] focus:outline-[var(--accent)] cursor-text rounded-sm ' +
+        (empty ? 'italic text-[var(--muted)]' : '')
+      }
+      contentEditable
+      suppressContentEditableWarning
+      role="textbox"
+      tabIndex={0}
+      onBlur={(e: React.FocusEvent<HTMLElement>) => {
+        const next = (e.currentTarget.textContent ?? '').replace(/ /g, ' ');
+        const cleaned = next === placeholder ? '' : next;
+        if (cleaned !== value) onCommit(cleaned);
+      }}
+      // Enter commits (blur) rather than inserting a newline for single-line
+      // titles/labels; Shift+Enter still allows a newline in bodies.
+      onKeyDown={(e: React.KeyboardEvent<HTMLElement>) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          (e.currentTarget as HTMLElement).blur();
+        }
+      }}
+    >
+      {empty ? placeholder : value}
+    </Tag>
+  );
+}
+
 // ============================== Top-level ==============================
 
 export default function ParticipantFlow({
@@ -454,20 +538,55 @@ function PreviewParticipantFlow({
   scripts?: Record<string, string>;
   referenceScript?: string;
 }) {
+  // Live, editable copy of the authored content. Inline edits mutate this and
+  // debounce-persist to the DB; the runner re-renders from it immediately.
+  const [content, setContent] = useState<ProjectContent>(project.content);
+  const [editing, setEditing] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Immutable per-module patch + debounced persist. Used by inline editing.
+  const editModule = useCallback(
+    (moduleId: string, mutate: (mod: Module) => void) => {
+      setContent((prev) => {
+        const next = structuredClone(prev) as ProjectContent;
+        const target = next.modules.find((mod) => mod.id === moduleId);
+        if (!target) return prev;
+        mutate(target);
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(() => {
+          void saveProjectAction({
+            id: project.id,
+            name: project.name,
+            content: next,
+          })
+            .then((res) => {
+              if (res.ok)
+                setSavedAt(new Date().toLocaleTimeString([], { hour12: false }));
+            })
+            .catch(() => {});
+        }, 800);
+        return next;
+      });
+    },
+    [project.id, project.name],
+  );
+
+  const editApi = useMemo<EditAPI>(
+    () => ({ enabled: editing, editModule }),
+    [editing, editModule],
+  );
+
   // Drop globals — those are real /register and /onboard pages, not
-  // ParticipantFlow screens. The preview lets you navigate module screens
-  // with full participant fidelity.
+  // ParticipantFlow screens. Enumerate from LIVE content so edits that change
+  // labels reflect in the jump dropdown.
   const screens = useMemo(
-    () =>
-      enumerateScreens(project.content).filter(
-        (s) => s.moduleType !== 'global',
-      ),
-    [project.content],
+    () => enumerateScreens(content).filter((s) => s.moduleType !== 'global'),
+    [content],
   );
 
   // Map screen.key -> local index within its module (1-based) for the M.N
-  // screen-ID display. ID stays stable across module reorders because it's
-  // derived from the current module list, not the screen kind.
+  // screen-ID display.
   const localIndex = useMemo(() => {
     const out = new Map<string, number>();
     let lastModuleId = '';
@@ -487,6 +606,13 @@ function PreviewParticipantFlow({
   const [screenIdx, setScreenIdx] = useState(0);
   const screen = screens[screenIdx];
 
+  // Live project object threaded to the runner so retro lookups + ids match
+  // the edited content.
+  const liveProject = useMemo<LoadedProject>(
+    () => ({ ...project, content }),
+    [project, content],
+  );
+
   if (!screen) {
     return (
       <Shell projectName={project.name} fill>
@@ -503,10 +629,10 @@ function PreviewParticipantFlow({
     );
   }
 
-  const moduleIdx = project.content.modules.findIndex(
+  const moduleIdx = content.modules.findIndex(
     (mod) => mod.id === screen.moduleId,
   );
-  const m = project.content.modules[moduleIdx];
+  const m = content.modules[moduleIdx];
   if (!m) {
     return (
       <Shell projectName={project.name} fill>
@@ -525,47 +651,89 @@ function PreviewParticipantFlow({
     setScreenIdx((i) => Math.min(screens.length - 1, i + 1));
 
   return (
-    <Shell
-      projectName={project.name}
-      moduleLabel={MODULE_TYPE_LABEL[m.type]}
-      moduleNumber={moduleIdx + 1}
-      total={project.content.modules.length}
-      fill
-      previewControls={
-        <PreviewControls
-          screens={screens}
-          screenIdx={screenIdx}
-          setScreenIdx={setScreenIdx}
-          screenId={screenId}
-          localIndex={localIndex}
-        />
-      }
-      rail={
-        scripts ? (
-          <ScriptRail
-            screenId={screenId}
-            script={scripts[screen.key] ?? ''}
-            referenceScript={referenceScript}
-          />
-        ) : undefined
-      }
-    >
-      {/* key={screen.key} forces a remount on screen change so the runner's
-          internal step state resets to the new initialScreen. Spec/entity
-          localStorage survives because its keys are (projectId, moduleId). */}
-      <ModuleRunner
-        key={screen.key}
-        project={project}
-        participantId={null}
-        module={m}
+    <EditContext.Provider value={editApi}>
+      <Shell
+        projectName={project.name}
+        moduleLabel={MODULE_TYPE_LABEL[m.type]}
         moduleNumber={moduleIdx + 1}
-        total={project.content.modules.length}
-        onComplete={advance}
-        controlled
-        onAdvance={advance}
-        initialScreen={screen}
-      />
-    </Shell>
+        total={content.modules.length}
+        fill
+        previewControls={
+          <>
+            <EditToggle
+              editing={editing}
+              setEditing={setEditing}
+              savedAt={savedAt}
+            />
+            <PreviewControls
+              screens={screens}
+              screenIdx={screenIdx}
+              setScreenIdx={setScreenIdx}
+              screenId={screenId}
+              localIndex={localIndex}
+            />
+          </>
+        }
+        rail={
+          scripts ? (
+            <ScriptRail
+              screenId={screenId}
+              script={scripts[screen.key] ?? ''}
+              referenceScript={referenceScript}
+            />
+          ) : undefined
+        }
+      >
+        {/* key includes `editing` so toggling edit mode remounts the runner
+            (swaps plain text <-> contentEditable cleanly). Spec/entity
+            localStorage survives because its keys are (projectId, moduleId). */}
+        <ModuleRunner
+          key={`${screen.key}:${editing}`}
+          project={liveProject}
+          participantId={null}
+          module={m}
+          moduleNumber={moduleIdx + 1}
+          total={content.modules.length}
+          onComplete={advance}
+          controlled
+          onAdvance={advance}
+          initialScreen={screen}
+        />
+      </Shell>
+    </EditContext.Provider>
+  );
+}
+
+function EditToggle({
+  editing,
+  setEditing,
+  savedAt,
+}: {
+  editing: boolean;
+  setEditing: (v: boolean) => void;
+  savedAt: string | null;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setEditing(!editing)}
+        className={
+          'text-xs px-2 py-1 border transition ' +
+          (editing
+            ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--rule-soft)]'
+            : 'border-[var(--rule)] text-[var(--muted)] hover:text-[var(--foreground)]')
+        }
+        title="Toggle inline editing — click any text on the screen to edit it"
+      >
+        {editing ? '✎ Editing copy' : '✎ Edit text'}
+      </button>
+      {editing && savedAt && (
+        <span className="text-[10px] italic text-[var(--muted)]">
+          saved {savedAt}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -738,13 +906,13 @@ function Shell({
       </header>
       {rail ? (
         <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
-          <Panel defaultSize={72} minSize={40}>
+          <Panel defaultSize="80%" minSize="40%">
             <div className="h-full flex flex-col p-6 gap-4 overflow-hidden">
               {children}
             </div>
           </Panel>
           <SplitHandle />
-          <Panel defaultSize={28} minSize={15} maxSize={55}>
+          <Panel defaultSize="20%" minSize="12%" maxSize="60%">
             {rail}
           </Panel>
         </PanelGroup>
@@ -953,6 +1121,17 @@ function ThinkAloudWarmupRunner({
   onAdvance?: () => void;
 }) {
   const copy = resolveWarmupCopy(m.copy);
+  const edit = useEdit();
+  const setCopy = (key: keyof NonNullable<ThinkAloudWarmupModule['copy']>, v: string) =>
+    edit.editModule(m.id, (mod) => {
+      if (mod.type !== 'think_aloud_warmup') return;
+      mod.copy = { ...(mod.copy ?? {}), [key]: v };
+    });
+  const setField = (key: 'title' | 'taskDescription' | 'body', v: string) =>
+    edit.editModule(m.id, (mod) => {
+      if (mod.type !== 'think_aloud_warmup') return;
+      mod[key] = v;
+    });
   // Participant's typed anagram answer, persisted locally so reload doesn't
   // erase. Compared to m.revealedAnswer for analysis logging; not gating.
   const [answer, setAnswer] = useLocalString(
@@ -983,12 +1162,18 @@ function ThinkAloudWarmupRunner({
   if (phase === 'intro') {
     return (
       <Centered>
-        <h2 className="text-2xl font-medium tracking-tight mb-4">
-          {copy.introTitle}
-        </h2>
-        <p className="text-[var(--muted)] leading-relaxed mb-8 whitespace-pre-wrap">
-          {copy.introBody}
-        </p>
+        <EditableText
+          as="h2"
+          className="text-2xl font-medium tracking-tight mb-4"
+          value={copy.introTitle}
+          onCommit={(v) => setCopy('introTitle', v)}
+        />
+        <EditableText
+          as="p"
+          className="text-[var(--muted)] leading-relaxed mb-8 whitespace-pre-wrap"
+          value={copy.introBody}
+          onCommit={(v) => setCopy('introBody', v)}
+        />
         <ContinueButton onClick={() => advanceTo('body')} />
       </Centered>
     );
@@ -998,14 +1183,27 @@ function ThinkAloudWarmupRunner({
     <div className="flex-1 flex justify-center overflow-hidden min-h-0">
       <div className="max-w-2xl w-full flex flex-col gap-4 overflow-hidden">
         <section className="flex flex-col gap-4 overflow-y-auto pr-1 h-full">
-          <h2 className="text-2xl font-medium tracking-tight">{m.title}</h2>
-          {m.taskDescription && (
-            <p className="italic text-[var(--muted)] leading-relaxed">
-              {m.taskDescription}
-            </p>
+          <EditableText
+            as="h2"
+            className="text-2xl font-medium tracking-tight"
+            value={m.title}
+            onCommit={(v) => setField('title', v)}
+          />
+          {(edit.enabled || m.taskDescription) && (
+            <EditableText
+              as="p"
+              className="italic text-[var(--muted)] leading-relaxed"
+              value={m.taskDescription}
+              onCommit={(v) => setField('taskDescription', v)}
+            />
           )}
-          {m.body && (
-            <p className="leading-relaxed whitespace-pre-wrap">{m.body}</p>
+          {(edit.enabled || m.body) && (
+            <EditableText
+              as="p"
+              className="leading-relaxed whitespace-pre-wrap"
+              value={m.body}
+              onCommit={(v) => setField('body', v)}
+            />
           )}
           {phase === 'revealed' && m.revealedTask && (
             <div className="mt-2 border border-[var(--rule)] bg-[var(--rule-soft)] px-4 py-6 text-center">
@@ -1032,9 +1230,12 @@ function ThinkAloudWarmupRunner({
             </div>
           )}
           {phase === 'revealed' && (
-            <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
-              {copy.postRevealCallout}
-            </p>
+            <EditableText
+              as="p"
+              className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2"
+              value={copy.postRevealCallout}
+              onCommit={(v) => setCopy('postRevealCallout', v)}
+            />
           )}
           {m.mandatory && phase === 'body' && (
             <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
@@ -1085,6 +1286,20 @@ function ThinkAloudExampleRunner({
   onAdvance?: () => void;
 }) {
   const copy = resolveWarmupCopy(m.copy);
+  const edit = useEdit();
+  const setField = (
+    key: 'title' | 'taskDescription' | 'body' | 'walkthroughText',
+    v: string,
+  ) =>
+    edit.editModule(m.id, (mod) => {
+      if (mod.type !== 'think_aloud_example') return;
+      mod[key] = v;
+    });
+  const setCopy = (key: keyof NonNullable<ThinkAloudExampleModule['copy']>, v: string) =>
+    edit.editModule(m.id, (mod) => {
+      if (mod.type !== 'think_aloud_example') return;
+      mod.copy = { ...(mod.copy ?? {}), [key]: v };
+    });
   const [phase, setPhase] = useState<WarmupPhase>(initialPhase ?? 'intro');
 
   function advanceTo(next: WarmupPhase) {
@@ -1103,13 +1318,21 @@ function ThinkAloudExampleRunner({
       <div className="flex-1 flex flex-col overflow-hidden">
         <ExampleBanner />
         <Centered>
-          <h2 className="text-2xl font-medium tracking-tight mb-4">
-            {copy.introTitle}
-          </h2>
-          <p className="text-[var(--muted)] leading-relaxed mb-8 whitespace-pre-wrap">
-            {m.taskDescription ||
-              'The researcher will demonstrate the think-aloud method.'}
-          </p>
+          <EditableText
+            as="h2"
+            className="text-2xl font-medium tracking-tight mb-4"
+            value={copy.introTitle}
+            onCommit={(v) => setCopy('introTitle', v)}
+          />
+          <EditableText
+            as="p"
+            className="text-[var(--muted)] leading-relaxed mb-8 whitespace-pre-wrap"
+            value={
+              m.taskDescription ||
+              'The researcher will demonstrate the think-aloud method.'
+            }
+            onCommit={(v) => setField('taskDescription', v)}
+          />
           <ContinueButton onClick={() => advanceTo('body')} />
         </Centered>
       </div>
@@ -1123,9 +1346,19 @@ function ThinkAloudExampleRunner({
       <div className="flex-1 flex justify-center overflow-hidden min-h-0">
         <div className="max-w-2xl w-full flex flex-col gap-4 overflow-hidden">
           <section className="flex flex-col gap-4 overflow-y-auto pr-1 h-full">
-            <h2 className="text-2xl font-medium tracking-tight">{m.title}</h2>
-            {m.body && (
-              <p className="leading-relaxed whitespace-pre-wrap">{m.body}</p>
+            <EditableText
+              as="h2"
+              className="text-2xl font-medium tracking-tight"
+              value={m.title}
+              onCommit={(v) => setField('title', v)}
+            />
+            {(edit.enabled || m.body) && (
+              <EditableText
+                as="p"
+                className="leading-relaxed whitespace-pre-wrap"
+                value={m.body}
+                onCommit={(v) => setField('body', v)}
+              />
             )}
             {revealed && m.revealedTask && (
               <div className="mt-2 border border-[var(--rule)] bg-[var(--rule-soft)] px-4 py-6 text-center">
@@ -1147,14 +1380,17 @@ function ThinkAloudExampleRunner({
                 )}
               </div>
             )}
-            {m.walkthroughText && (
+            {(edit.enabled || m.walkthroughText) && (
               <div className="border border-dashed border-[var(--rule)] bg-[var(--panel)] p-3">
                 <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)] mb-1">
                   Researcher narrates
                 </p>
-                <p className="whitespace-pre-wrap leading-relaxed text-sm">
-                  {m.walkthroughText}
-                </p>
+                <EditableText
+                  as="p"
+                  className="whitespace-pre-wrap leading-relaxed text-sm"
+                  value={m.walkthroughText ?? ''}
+                  onCommit={(v) => setField('walkthroughText', v)}
+                />
               </div>
             )}
             <div className="mt-auto pt-4 flex gap-3">
@@ -1559,14 +1795,14 @@ function InitialSpecStep({
   return (
     <div className="flex-1 min-h-0 px-6 md:px-10">
       <PanelGroup orientation="horizontal" className="h-full">
-        <Panel defaultSize={33} minSize={20} maxSize={50}>
+        <Panel defaultSize="33%" minSize="20%" maxSize="50%">
           <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
             <h2 className="text-2xl font-medium tracking-tight">{t.title}</h2>
             <RequirementsBlock requirements={t.requirements} />
           </section>
         </Panel>
         <SplitHandle />
-        <Panel defaultSize={67} minSize={50} maxSize={80}>
+        <Panel defaultSize="67%" minSize="50%" maxSize="80%">
           <SpecColumn
             spec={spec}
             setSpec={setSpec}
@@ -1619,7 +1855,7 @@ function ScenarioReadStep({
 }) {
   return (
     <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
-      <Panel defaultSize={55} minSize={30} maxSize={75}>
+      <Panel defaultSize="55%" minSize="30%" maxSize="75%">
         <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
           <div className="opacity-60">
             <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
@@ -1656,7 +1892,7 @@ function ScenarioReadStep({
         </section>
       </Panel>
       <SplitHandle />
-      <Panel defaultSize={45} minSize={25} maxSize={70}>
+      <Panel defaultSize="45%" minSize="25%" maxSize="70%">
         <SpecColumn
           spec={spec}
           setSpec={setSpec}
@@ -1759,7 +1995,7 @@ function ScenarioReviseStep({
 }) {
   return (
     <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
-      <Panel defaultSize={55} minSize={30} maxSize={75}>
+      <Panel defaultSize="55%" minSize="30%" maxSize="75%">
         <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
           <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
             Scenario {scenarioIdx + 1} of {totalScenarios} · Revising specifications
@@ -1799,7 +2035,7 @@ function ScenarioReviseStep({
         </section>
       </Panel>
       <SplitHandle />
-      <Panel defaultSize={45} minSize={25} maxSize={70}>
+      <Panel defaultSize="45%" minSize="25%" maxSize="70%">
         <SpecColumn
           spec={spec}
           setSpec={setSpec}
@@ -1875,7 +2111,7 @@ function ExampleInitialSpecStep({
       <ExampleBanner />
       <div className="flex-1 min-h-0 px-6 md:px-10">
         <PanelGroup orientation="horizontal" className="h-full">
-          <Panel defaultSize={33} minSize={20} maxSize={50}>
+          <Panel defaultSize="33%" minSize="20%" maxSize="50%">
             <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
               <h2 className="text-2xl font-medium tracking-tight">
                 {example.title}
@@ -1884,7 +2120,7 @@ function ExampleInitialSpecStep({
             </section>
           </Panel>
           <SplitHandle />
-          <Panel defaultSize={67} minSize={50} maxSize={80}>
+          <Panel defaultSize="67%" minSize="50%" maxSize="80%">
             <SpecColumn
               spec={moment.spec}
               setSpec={() => {}}
@@ -1923,7 +2159,7 @@ function ExampleScenarioReadStep({
     <div className="flex-1 flex flex-col overflow-hidden">
       <ExampleBanner />
       <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
-        <Panel defaultSize={55} minSize={30} maxSize={75}>
+        <Panel defaultSize="55%" minSize="30%" maxSize="75%">
           <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
             <div className="opacity-60">
               <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
@@ -1949,7 +2185,7 @@ function ExampleScenarioReadStep({
           </section>
         </Panel>
         <SplitHandle />
-        <Panel defaultSize={45} minSize={25} maxSize={70}>
+        <Panel defaultSize="45%" minSize="25%" maxSize="70%">
           <SpecColumn
             spec={m.spec}
             setSpec={() => {}}
@@ -1989,7 +2225,7 @@ function ExampleScenarioReviseStep({
     <div className="flex-1 flex flex-col overflow-hidden">
       <ExampleBanner />
       <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
-        <Panel defaultSize={55} minSize={30} maxSize={75}>
+        <Panel defaultSize="55%" minSize="30%" maxSize="75%">
           <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
             <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
               Scenario {scenarioIdx + 1} of {totalScenarios} · Revising
@@ -2018,7 +2254,7 @@ function ExampleScenarioReviseStep({
           </section>
         </Panel>
         <SplitHandle />
-        <Panel defaultSize={45} minSize={25} maxSize={70}>
+        <Panel defaultSize="45%" minSize="25%" maxSize="70%">
           <SpecColumn
             spec={m.spec}
             setSpec={() => {}}
@@ -2343,7 +2579,7 @@ function RetrospectiveRunner({
 
   return (
     <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
-      <Panel defaultSize={50} minSize={30} maxSize={70}>
+      <Panel defaultSize="50%" minSize="30%" maxSize="70%">
         <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
           <header>
             <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
@@ -2377,7 +2613,7 @@ function RetrospectiveRunner({
         </section>
       </Panel>
       <SplitHandle />
-      <Panel defaultSize={50} minSize={30} maxSize={70}>
+      <Panel defaultSize="50%" minSize="30%" maxSize="70%">
         <div className="h-full flex flex-col gap-2 overflow-y-auto min-h-0 pl-3">
           {sourceModuleCaption && (
             <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">

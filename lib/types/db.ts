@@ -22,6 +22,7 @@ export type Database = {
           label: string
           options: Json | null
           position: number
+          required: boolean
           type: Database["public"]["Enums"]["onboarding_field_type"]
           updated_at: string
         }
@@ -32,6 +33,7 @@ export type Database = {
           label: string
           options?: Json | null
           position?: number
+          required?: boolean
           type: Database["public"]["Enums"]["onboarding_field_type"]
           updated_at?: string
         }
@@ -42,6 +44,7 @@ export type Database = {
           label?: string
           options?: Json | null
           position?: number
+          required?: boolean
           type?: Database["public"]["Enums"]["onboarding_field_type"]
           updated_at?: string
         }

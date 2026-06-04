@@ -9,7 +9,7 @@ export default async function QuestionnairePage() {
   const supabase = createServiceRoleClient();
   const { data: fields } = await supabase
     .from('onboarding_fields')
-    .select('id, field_key, label, type, options, position')
+    .select('id, field_key, label, type, options, position, required')
     .order('position', { ascending: true });
 
   return (
