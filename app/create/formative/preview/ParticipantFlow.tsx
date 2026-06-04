@@ -1633,11 +1633,11 @@ function TaskRunner({
       return transitionTo({ kind: 'scenario_read', idx: 0 });
     }
     if (step.kind === 'scenario_read') {
-      // Recall probe ON → read → ponder → revise. OFF → the read screen IS
-      // the editable work screen; leave straight to retro/next.
+      // Read beat (spec read-only) → revise beat (editable). The recall probe,
+      // when on, inserts a prospective pause between them.
       if (t.enableRecallProbe)
         return transitionTo({ kind: 'scenario_ponder', idx: step.idx });
-      return leaveScenario(step.idx);
+      return transitionTo({ kind: 'scenario_revise', idx: step.idx });
     }
     if (step.kind === 'scenario_ponder')
       return transitionTo({ kind: 'scenario_revise', idx: step.idx });
@@ -2026,6 +2026,10 @@ function ScenarioReadStep({
       </Panel>
       <SplitHandle />
       <Panel defaultSize="45%" minSize="25%" maxSize="70%">
+        {/* Read beat: spec is READ-ONLY. The participant locates where the
+            scenario isn't yet handled and talks through it; editing happens on
+            the next (revise) screen. Separating decide-from-write keeps the
+            think-aloud on reasoning, not transcription. */}
         <SpecColumn
           spec={spec}
           setSpec={setSpec}
@@ -2034,8 +2038,16 @@ function ScenarioReadStep({
           specSavedAt={specSavedAt}
           entitiesSavedAt={entitiesSavedAt}
           onContinue={onContinue}
-          continueLabel="Continue"
-          placeholder={t.copy?.specPlaceholder}
+          continueLabel="Continue to revise"
+          readOnly
+          headerNote="Your specification so far (read-only on this screen)"
+          leadIn={
+            <div className="bg-[var(--rule-soft)] border border-[var(--rule)] px-3 py-2 text-sm text-[var(--muted)]">
+              Read the scenario and find where your current specification
+              doesn&rsquo;t yet handle it. Talk through what&rsquo;s missing —
+              you&rsquo;ll edit on the next screen.
+            </div>
+          }
         />
       </Panel>
     </PanelGroup>

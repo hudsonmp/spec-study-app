@@ -111,11 +111,11 @@ export function labelFor(kind: ScreenKind): string {
     case 'task_initial_spec':
       return 'Requirements & spec';
     case 'task_scenario_read':
-      return 'Scenario';
+      return 'Scenario — read';
     case 'task_scenario_ponder':
       return 'Scenario ponder';
     case 'task_scenario_revise':
-      return 'Scenario revise';
+      return 'Scenario — revise';
     case 'task_scenario_retro':
       return 'Scenario retrospective';
     case 'task_outro':
@@ -233,11 +233,14 @@ export function enumerateScreens(content: ProjectContent): Screen[] {
         });
       });
       const retro = m.perScenarioRetrospective ?? [];
-      // Per-scenario screens: a single read-and-revise screen by default;
-      // when the recall probe is enabled, the read → ponder → revise trio.
+      // Per-scenario screens: a read beat (spec read-only — locate the gap)
+      // then a revise beat (spec editable). Separating "decide" from "write"
+      // keeps think-aloud on requirement reasoning rather than transcription
+      // (VanLehn impasse; Kapur productive failure; Fox/Ericsson/Best 2011).
+      // The recall probe, when enabled, inserts a prospective pause between.
       const perScenario: ScreenKind[] = m.enableRecallProbe
         ? ['task_scenario_read', 'task_scenario_ponder', 'task_scenario_revise']
-        : ['task_scenario_read'];
+        : ['task_scenario_read', 'task_scenario_revise'];
       m.scenarios.forEach((sc, idx) => {
         perScenario.forEach((kind) => {
           push(kind, {
