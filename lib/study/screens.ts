@@ -173,12 +173,11 @@ export function enumerateScreens(content: ProjectContent): Screen[] {
     }
 
     if (m.type === 'think_aloud_example') {
+      // Two screens: intro, then a single body screen that shows the task +
+      // an open answer box together (no separate reveal step).
       push('warmup_example_intro');
       push('warmup_example_body', {
-        summary: snippet(m.body || m.taskDescription || ''),
-      });
-      push('warmup_example_revealed', {
-        summary: m.revealedTask || '(no revealed task)',
+        summary: snippet(m.body || m.taskDescription || m.revealedTask || ''),
       });
       return;
     }

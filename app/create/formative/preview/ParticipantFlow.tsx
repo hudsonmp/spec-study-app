@@ -1458,6 +1458,9 @@ function ThinkAloudExampleRunner({
       mod.copy = { ...(mod.copy ?? {}), [key]: v };
     });
   const [phase, setPhase] = useState<WarmupPhase>(initialPhase ?? 'intro');
+  // Open answer box for the demo — empty, editable (the researcher narrates
+  // filling it). Not persisted; this is a display-only worked example.
+  const [answer, setAnswer] = useState('');
 
   function advanceTo(next: WarmupPhase) {
     save.recordEvent('step_advance', { from: phase, to: next });
@@ -1496,7 +1499,7 @@ function ThinkAloudExampleRunner({
     );
   }
 
-  const revealed = phase === 'revealed';
+  // Single body screen: task + open answer box shown together (no reveal step).
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <ExampleBanner />
@@ -1517,24 +1520,27 @@ function ThinkAloudExampleRunner({
                 onCommit={(v) => setField('body', v)}
               />
             )}
-            {revealed && m.revealedTask && (
+            {m.revealedTask && (
               <div className="mt-2 border border-[var(--rule)] bg-[var(--rule-soft)] px-4 py-6 text-center">
                 <p className="text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-3">
                   Task
                 </p>
-                <p className="font-mono text-3xl tracking-[0.4em] mb-4">
+                <p className="font-mono text-3xl tracking-[0.4em] mb-5">
                   {m.revealedTask}
                 </p>
-                {m.revealedAnswer && (
-                  <div className="max-w-xs mx-auto text-left">
-                    <span className="block text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-1">
-                      {copy.answerInputLabel}
-                    </span>
-                    <div className="w-full border border-[var(--rule)] bg-[var(--rule-soft)] px-3 py-2 font-mono tracking-[0.25em] text-center text-lg">
-                      {m.revealedAnswer}
-                    </div>
-                  </div>
-                )}
+                <label className="block text-left max-w-xs mx-auto">
+                  <span className="block text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-1">
+                    {copy.answerInputLabel}
+                  </span>
+                  <input
+                    type="text"
+                    value={answer}
+                    onChange={(e) => setAnswer(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="w-full border border-[var(--rule)] bg-white px-3 py-2 font-mono tracking-[0.25em] text-center text-lg focus:outline-none focus:border-[var(--accent)]"
+                  />
+                </label>
               </div>
             )}
             {(edit.enabled || m.walkthroughText) && (
@@ -1551,13 +1557,7 @@ function ThinkAloudExampleRunner({
               </div>
             )}
             <div className="mt-auto pt-4 flex gap-3">
-              {phase === 'body' && (
-                <ContinueButton
-                  onClick={() => advanceTo('revealed')}
-                  label={copy.revealButtonLabel}
-                />
-              )}
-              {phase === 'revealed' && <ContinueButton onClick={finish} />}
+              <ContinueButton onClick={finish} />
             </div>
           </section>
         </div>
