@@ -2159,20 +2159,12 @@ function ScenarioReadStep({
 }) {
   return (
     <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
-      <Panel defaultSize="55%" minSize="30%" maxSize="75%">
+      <Panel defaultSize="62%" minSize="35%" maxSize="78%">
         <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
-          <div className="opacity-60">
-            <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
-              Prior
-            </span>
-            <h2 className="text-xl font-medium tracking-tight mt-1">
-              {t.title}
-            </h2>
-            <RequirementsBlock requirements={t.requirements} compact />
-          </div>
-          {/* Scenario (skinny) and the map sit side by side. */}
-          <div className="flex gap-3 items-start">
-            <div className="flex-1 min-w-0 border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
+          <CollapsibleRequirements title={t.title} requirements={t.requirements} />
+          {/* Scenario and map side by side; the map wraps below if too narrow. */}
+          <div className="flex flex-wrap gap-3 items-start">
+            <div className="flex-1 min-w-[260px] border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
               <div className="flex justify-between items-baseline mb-1">
                 <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--accent)]">
                   New this screen
@@ -2185,7 +2177,7 @@ function ScenarioReadStep({
               <ClauseList clauses={scenario.clauses} highlightable />
             </div>
             {t.cityMap && (
-              <div className="shrink-0 w-[300px]">
+              <div className="shrink-0 w-[320px] max-w-full">
                 <MapCanvas
                   map={t.cityMap}
                   scenarioId={scenario.id}
@@ -2201,7 +2193,7 @@ function ScenarioReadStep({
         </section>
       </Panel>
       <SplitHandle />
-      <Panel defaultSize="45%" minSize="25%" maxSize="70%">
+      <Panel defaultSize="38%" minSize="22%" maxSize="65%">
         {/* Read beat: spec is READ-ONLY. The participant locates where the
             scenario isn't yet handled and talks through it; editing happens on
             the next (revise) screen. Separating decide-from-write keeps the
@@ -2332,23 +2324,15 @@ function ScenarioReviseStep({
 }) {
   return (
     <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
-      <Panel defaultSize="55%" minSize="30%" maxSize="75%">
+      <Panel defaultSize="62%" minSize="35%" maxSize="78%">
         <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
           <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
             Scenario {scenarioIdx + 1} of {totalScenarios} · Revising specifications
           </p>
-          <div className="opacity-60">
-            <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
-              Prior
-            </span>
-            <h2 className="text-xl font-medium tracking-tight mt-1">
-              {t.title}
-            </h2>
-            <RequirementsBlock requirements={t.requirements} compact />
-          </div>
-          {/* Scenario (skinny) and the map sit side by side. */}
-          <div className="flex gap-3 items-start">
-            <div className="flex-1 min-w-0 border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
+          <CollapsibleRequirements title={t.title} requirements={t.requirements} />
+          {/* Scenario and map side by side; the map wraps below if too narrow. */}
+          <div className="flex flex-wrap gap-3 items-start">
+            <div className="flex-1 min-w-[260px] border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
               <div className="flex justify-between items-baseline mb-1">
                 <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--accent)]">
                   New this screen
@@ -2361,7 +2345,7 @@ function ScenarioReviseStep({
               <ClauseList clauses={scenario.clauses} highlightable />
             </div>
             {t.cityMap && (
-              <div className="shrink-0 w-[300px]">
+              <div className="shrink-0 w-[320px] max-w-full">
                 <MapCanvas
                   map={t.cityMap}
                   scenarioId={scenario.id}
@@ -2377,7 +2361,7 @@ function ScenarioReviseStep({
         </section>
       </Panel>
       <SplitHandle />
-      <Panel defaultSize="45%" minSize="25%" maxSize="70%">
+      <Panel defaultSize="38%" minSize="22%" maxSize="65%">
         <SpecColumn
           spec={spec}
           setSpec={setSpec}
@@ -2986,29 +2970,19 @@ function RetrospectiveRunner({
   return (
     <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
       <Panel defaultSize="50%" minSize="30%" maxSize="70%">
-        <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
-          <header>
-            <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
-              Retrospective · Question {stepIdx + 1} of {total}
-            </p>
-            <h2 className="text-2xl font-medium tracking-tight mt-1">
-              {m.title}
-            </h2>
-          </header>
-          <div>
-            <p className="text-xl leading-relaxed mb-4">
-              <strong>{stepIdx + 1}.</strong> {q.text}
-            </p>
-            <p className="text-xs italic text-[var(--muted)] mb-4">
-              Answer aloud — the researcher is recording your response.
-            </p>
-            <div className="pt-1">
-              <ContinueButton
-                onClick={advance}
-                label={stepIdx === total - 1 ? 'Done' : 'Next question'}
-              />
-            </div>
-          </div>
+        {/* Verbal-only: the question is centered, no answer box. */}
+        <section className="h-full flex flex-col items-center justify-center text-center gap-5 overflow-y-auto px-6">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--muted)]">
+            Retrospective · Question {stepIdx + 1} of {total}
+          </p>
+          <p className="text-2xl leading-relaxed max-w-md">{q.text}</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-[var(--accent)]">
+            🔊 Answer aloud — spoken response only
+          </p>
+          <ContinueButton
+            onClick={advance}
+            label={stepIdx === total - 1 ? 'Done' : 'Next question'}
+          />
         </section>
       </Panel>
       <SplitHandle />
@@ -3293,6 +3267,28 @@ function RequirementsBlock({
   );
 }
 
+// Requirements shown once per task, then collapsed (de-emphasized) on each
+// scenario screen — expandable on demand.
+function CollapsibleRequirements({
+  title,
+  requirements,
+}: {
+  title: string;
+  requirements: Requirement[];
+}) {
+  if (requirements.length === 0) return null;
+  return (
+    <details className="opacity-70">
+      <summary className="cursor-pointer text-[10px] uppercase tracking-[0.14em] text-[var(--muted)] hover:text-[var(--foreground)] select-none">
+        Requirements — {title} (expand)
+      </summary>
+      <div className="mt-2">
+        <RequirementsBlock requirements={requirements} compact />
+      </div>
+    </details>
+  );
+}
+
 function ClauseList({
   clauses,
   highlightable = false,
@@ -3307,12 +3303,34 @@ function ClauseList({
         (highlightable ? 'selection:bg-[#fffbea]' : '')
       }
     >
-      {clauses.map((c, ci) => (
-        <p key={c.id}>
-          <strong>{c.type}</strong> {c.text}
-          {ci === clauses.length - 1 ? '.' : ','}
-        </p>
-      ))}
+      {clauses.map((c) => {
+        // Show the cumulative-scenario change markers so the participant sees
+        // what's new vs struck-out this scenario.
+        if (c.marker === 'superseded') {
+          return (
+            <p key={c.id} className="opacity-55">
+              <s>
+                <strong>{c.type}</strong> {c.text}
+              </s>
+            </p>
+          );
+        }
+        if (c.marker === 'new') {
+          return (
+            <p key={c.id} className="font-medium">
+              <span className="text-[var(--accent)] text-[10px] uppercase tracking-wider mr-1">
+                New
+              </span>
+              <strong>{c.type}</strong> {c.text}
+            </p>
+          );
+        }
+        return (
+          <p key={c.id}>
+            <strong>{c.type}</strong> {c.text}
+          </p>
+        );
+      })}
     </div>
   );
 }
