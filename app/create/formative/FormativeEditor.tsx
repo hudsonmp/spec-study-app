@@ -284,9 +284,12 @@ function ProjectEditor({
         onExport={exportJson}
         onExportShell={exportShell}
       />
-      <section className="flex-1 overflow-y-auto px-6 py-6 min-w-0">
+      <section className="flex-1 overflow-y-auto px-8 py-6 min-w-0">
         {selected ? (
-          <div className="max-w-3xl">
+          // Fill the pane (no narrow max-width) so the editor uses the full
+          // width — kills the right whitespace and lets the wide clause-text
+          // inputs breathe instead of truncating.
+          <div className="w-full">
             <div className="mb-4 pb-2 border-b border-[var(--rule-soft)] flex items-baseline gap-2">
               <span className="text-xs uppercase tracking-[0.14em] text-[var(--muted)]">
                 {MODULE_TYPE_LABEL[selected.type]}
