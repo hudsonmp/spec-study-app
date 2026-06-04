@@ -401,6 +401,37 @@ function EditableText({
   );
 }
 
+// A task callout (the amber/grey disclaimer lines) made inline-editable: when
+// a moduleId is given (real task/warmup) it commits to that module's copy
+// slot; without one (example/display contexts) it renders as plain text.
+function EditableCallout({
+  moduleId,
+  copyKey,
+  value,
+  className,
+}: {
+  moduleId?: string;
+  copyKey: 'warmupAnnotation' | 'realAnnotation' | 'ponderDefault' | 'ponderHoldNote' | 'reviseCallout';
+  value: string;
+  className: string;
+}) {
+  const edit = useEdit();
+  if (!moduleId) return <p className={className}>{value}</p>;
+  return (
+    <EditableText
+      as="p"
+      className={className}
+      value={value}
+      onCommit={(v) =>
+        edit.editModule(moduleId, (mod) => {
+          if (mod.type !== 'task' && mod.type !== 'task_warmup') return;
+          mod.copy = { ...(mod.copy ?? {}), [copyKey]: v };
+        })
+      }
+    />
+  );
+}
+
 // ============================== Top-level ==============================
 
 export default function ParticipantFlow({
@@ -1796,6 +1827,7 @@ function TaskRunner({
   if (step.kind === 'intro') {
     return (
       <TaskIntro
+        moduleId={m.id}
         moduleNumber={moduleNumber}
         total={total}
         isWarmup={isWarmup}
@@ -1859,6 +1891,7 @@ function TaskRunner({
   if (step.kind === 'scenario_ponder') {
     return (
       <PonderStep
+        moduleId={m.id}
         scenarioIdx={step.idx}
         totalScenarios={t.scenarios.length}
         taskCopy={t.copy}
@@ -1974,6 +2007,7 @@ function TaskOutroStep({
 // =============================== Task: Intro ==============================
 
 function TaskIntro({
+  moduleId,
   moduleNumber,
   total,
   isWarmup,
@@ -1981,6 +2015,7 @@ function TaskIntro({
   copy,
   onContinue,
 }: {
+  moduleId: string;
   moduleNumber: number;
   total: number;
   isWarmup: boolean;
@@ -1998,16 +2033,17 @@ function TaskIntro({
           Module {moduleNumber} of {total}
         </p>
         <h2 className="text-3xl font-medium tracking-tight">{title}</h2>
-        <p
+        <EditableCallout
+          moduleId={moduleId}
+          copyKey={isWarmup ? 'warmupAnnotation' : 'realAnnotation'}
+          value={annotation}
           className={
             'text-sm italic px-4 py-3 whitespace-pre-wrap ' +
             (isWarmup
               ? 'text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a]'
               : 'text-[var(--muted)] bg-[var(--panel)] border border-[var(--rule)]')
           }
-        >
-          {annotation}
-        </p>
+        />
         <ContinueButton onClick={onContinue} />
       </div>
     </Centered>
@@ -2191,6 +2227,7 @@ function ScenarioReadStep({
 // ====================== Task: Pause-and-ponder step ======================
 
 function PonderStep({
+  moduleId,
   scenarioIdx,
   totalScenarios,
   taskCopy,
@@ -2198,6 +2235,9 @@ function PonderStep({
   isExample = false,
   copyOverride,
 }: {
+  // moduleId present (real task) → ponder prompt + hold note are inline-
+  // editable; absent (example/display) → plain text.
+  moduleId?: string;
   scenarioIdx: number;
   totalScenarios: number;
   taskCopy: TaskContent['copy'];
@@ -2219,17 +2259,29 @@ function PonderStep({
           <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
             Scenario {scenarioIdx + 1} of {totalScenarios} · Pause and ponder
           </p>
-          <p className="text-2xl leading-relaxed whitespace-pre-wrap">
-            {showOverride ? trimmed : ponderText}
-          </p>
+          {showOverride ? (
+            <p className="text-2xl leading-relaxed whitespace-pre-wrap">
+              {trimmed}
+            </p>
+          ) : (
+            <EditableCallout
+              moduleId={moduleId}
+              copyKey="ponderDefault"
+              value={ponderText}
+              className="text-2xl leading-relaxed whitespace-pre-wrap"
+            />
+          )}
           {isExample && !showOverride && (
             <p className="text-xs italic text-[var(--muted)]">
               (Example — researcher narrates)
             </p>
           )}
-          <p className="text-sm italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-4 py-3">
-            {holdNote}
-          </p>
+          <EditableCallout
+            moduleId={moduleId}
+            copyKey="ponderHoldNote"
+            value={holdNote}
+            className="text-sm italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-4 py-3"
+          />
           <ContinueButton onClick={onContinue} />
         </div>
       </Centered>
@@ -2326,9 +2378,14 @@ function ScenarioReviseStep({
           continueLabel={isLast ? 'Finish task' : 'Next scenario'}
           placeholder={t.copy?.specPlaceholder}
           leadIn={
-            <div className="bg-[#fffbea] border border-[#d8c98a] px-3 py-2 text-sm italic text-[#7c5a2e]">
-              {t.copy?.reviseCallout?.trim() || DEFAULT_TASK_COPY.reviseCallout}
-            </div>
+            <EditableCallout
+              moduleId={moduleId}
+              copyKey="reviseCallout"
+              value={
+                t.copy?.reviseCallout?.trim() || DEFAULT_TASK_COPY.reviseCallout
+              }
+              className="bg-[#fffbea] border border-[#d8c98a] px-3 py-2 text-sm italic text-[#7c5a2e]"
+            />
           }
         />
       </Panel>
