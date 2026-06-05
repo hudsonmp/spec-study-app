@@ -1248,6 +1248,12 @@ function TaskEditor({
               title: `Scenario ${t.scenarios.length + 1}`,
               facilitatorNote: '',
               clauses: clonedClauses,
+              // Inherit the prior scenario's map (vehicles + rider pickup/
+              // dropoff) so each shorter scenario builds on the last; the
+              // researcher then tweaks rather than re-placing every marker.
+              seededMarkers: prev?.seededMarkers
+                ? structuredClone(prev.seededMarkers)
+                : undefined,
             });
           })
         }
