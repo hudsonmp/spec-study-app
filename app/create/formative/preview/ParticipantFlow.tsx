@@ -1938,17 +1938,11 @@ function TaskRunner({
     return (
       <ScenarioRetroStep
         question={q.text}
-        boxHeight={q.boxHeight}
         scenarioTitle={scenario.title}
         scenarioIdx={step.idx}
         totalScenarios={t.scenarios.length}
         questionIdx={step.qIdx}
         totalQuestions={retro.length}
-        value={retroAnswers[answerKey] ?? ''}
-        onChange={(v) => {
-          setRetroAnswer(answerKey, v);
-          saveRetro(answerKey, v);
-        }}
         spec={spec}
         entities={entities}
         onContinue={next}
@@ -2779,28 +2773,22 @@ function ExampleSingleScreen({
 
 function ScenarioRetroStep({
   question,
-  boxHeight,
   scenarioTitle,
   scenarioIdx,
   totalScenarios,
   questionIdx,
   totalQuestions,
-  value,
-  onChange,
   spec,
   entities,
   onContinue,
   continueLabel,
 }: {
   question: string;
-  boxHeight: number;
   scenarioTitle: string;
   scenarioIdx: number;
   totalScenarios: number;
   questionIdx: number;
   totalQuestions: number;
-  value: string;
-  onChange: (v: string) => void;
   // The participant's spec + entity table, shown read-only (locked) beside the
   // retrospective question so they can reference what they wrote.
   spec: string;
@@ -2811,6 +2799,7 @@ function ScenarioRetroStep({
   return (
     <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
       <Panel defaultSize="50%" minSize="30%" maxSize="70%">
+        {/* Verbal-only: question + reference spec, no answer box. */}
         <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
           <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
             {scenarioTitle} · Scenario {toRoman(scenarioIdx + 1)} of {totalScenarios} ·
@@ -2819,13 +2808,9 @@ function ScenarioRetroStep({
           <p className="text-lg leading-relaxed whitespace-pre-wrap">
             {question}
           </p>
-          <textarea
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            className="w-full border border-[var(--rule)] p-3 bg-[var(--panel)] focus:outline-none focus:border-[var(--accent)] leading-relaxed resize-y"
-            style={{ minHeight: `${Math.max(boxHeight, 1) * 80}px` }}
-            placeholder="Reflect on your reasoning…"
-          />
+          <p className="text-xs uppercase tracking-[0.16em] text-[var(--accent)]">
+            🔊 Answer aloud — spoken response only
+          </p>
           <div className="pt-2">
             <ContinueButton onClick={onContinue} label={continueLabel} />
           </div>
