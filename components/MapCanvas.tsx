@@ -12,6 +12,16 @@ import type { CityMap, SeededMarker } from '@/lib/types/study';
 import { VEHICLE_COLOR_TO_NUMBER, VEHICLE_HEX } from '@/lib/types/study';
 
 const CELL = 22;
+// Marker half-extents (USER units) — also the obstacle boxes the label engine
+// routes around. Car/person icons are drawn at 2×{hw,hh}.
+const MARK = {
+  landmark: 6,
+  carHW: 15,
+  carHH: 12,
+  personHW: 11,
+  personHH: 13,
+  dropX: 9,
+} as const;
 
 export type MapCanvasProps = {
   map: CityMap;
@@ -39,6 +49,66 @@ function fanOffset(n: number): { dx: number; dy: number } {
 }
 
 type Pt = { x: number; y: number };
+// Axis-aligned box in USER (CELL-scaled) units, centered.
+type Box = { cx: number; cy: number; hw: number; hh: number };
+
+function boxOverlap(a: Box, b: Box): number {
+  const ox = Math.min(a.cx + a.hw, b.cx + b.hw) - Math.max(a.cx - a.hw, b.cx - b.hw);
+  const oy = Math.min(a.cy + a.hh, b.cy + b.hh) - Math.max(a.cy - a.hh, b.cy - b.hh);
+  return ox > 0 && oy > 0 ? ox * oy : 0;
+}
+
+// Rough text box (no canvas measuring on the server). 0.56·fontSize avg advance.
+function labelHalfDims(text: string, fontSize: number): { hw: number; hh: number } {
+  return { hw: (text.length * fontSize * 0.56) / 2, hh: (fontSize * 1.15) / 2 };
+}
+
+// Stable filter id from a colour string.
+function tintId(color: string): string {
+  return 'tint-' + color.replace(/[^a-z0-9]/gi, '');
+}
+
+// Point-feature label placement: try candidate positions around the anchor,
+// keep the one that overlaps the fewest already-placed boxes (and drifts least
+// from the anchor). Greedy — earlier (more important) labels claim space first.
+const LABEL_DIRS: { dx: number; dy: number }[] = [
+  { dx: 0, dy: 1 }, // S (below — conventional default)
+  { dx: 0, dy: -1 }, // N
+  { dx: 1, dy: 0 }, // E
+  { dx: -1, dy: 0 }, // W
+  { dx: 1, dy: 1 }, // SE
+  { dx: -1, dy: 1 }, // SW
+  { dx: 1, dy: -1 }, // NE
+  { dx: -1, dy: -1 }, // NW
+];
+
+function placeLabel(
+  anchor: Pt,
+  anchorHalf: { hw: number; hh: number },
+  text: string,
+  fontSize: number,
+  occupied: Box[],
+): Box {
+  const lh = labelHalfDims(text, fontSize);
+  const gap = 3;
+  let best: Box | null = null;
+  let bestScore = Infinity;
+  for (const d of LABEL_DIRS) {
+    const cx = anchor.x + d.dx * (anchorHalf.hw + gap + lh.hw);
+    const cy = anchor.y + d.dy * (anchorHalf.hh + gap + lh.hh);
+    const box: Box = { cx, cy, hw: lh.hw, hh: lh.hh };
+    let overlap = 0;
+    for (const o of occupied) overlap += boxOverlap(box, o);
+    const drift = Math.hypot(d.dx, d.dy); // mild preference for cardinal/near
+    const score = overlap * 1000 + drift;
+    if (score < bestScore) {
+      bestScore = score;
+      best = box;
+      if (overlap === 0 && (d.dx === 0 || d.dy === 0)) break; // clean cardinal — take it
+    }
+  }
+  return best as Box;
+}
 
 // MAP — the participant MANIPULATES the existing seeded markers (drags the
 // vehicles); they cannot add or delete. Riders (pickup dot + dropoff X) are
@@ -145,41 +215,118 @@ export default function MapCanvas({
     [pos, vehicleDefault, N],
   );
 
-  // Content bounding box (grid units) → tight viewBox (no road whitespace).
-  const vb = useMemo(() => {
-    const xs: number[] = [];
-    const ys: number[] = [];
-    const add = (x: number, y: number) => {
-      xs.push(x);
-      ys.push(y);
-    };
+  // Layout engine: place marker obstacles, then greedily place each floating
+  // label where it overlaps the fewest already-placed boxes, then size the
+  // viewBox to include the LABEL boxes too (so long names never clip).
+  // Computed from the STATIC reference layout (vehicle defaults, not live drag)
+  // so labels don't jitter while a vehicle is being dragged.
+  const { vb, labels } = useMemo(() => {
+    const occupied: Box[] = []; // marker obstacles + placed labels
+    const allBoxes: Box[] = []; // everything, for the viewBox extent
+
+    // Street endpoints contribute to the extent only (thin, labels can cross).
     (map.streets ?? []).forEach((s) => {
-      add(s.from[0], s.from[1]);
-      add(s.to[0], s.to[1]);
+      allBoxes.push({ cx: s.from[0] * CELL, cy: s.from[1] * CELL, hw: 6, hh: 6 });
+      allBoxes.push({ cx: s.to[0] * CELL, cy: s.to[1] * CELL, hw: 6, hh: 6 });
     });
-    (map.landmarks ?? []).forEach((l) => add(l.x, l.y));
-    if (map.origin) add(map.origin.x, map.origin.y);
-    Object.values(riderPickup).forEach((p) => add(p.x, p.y));
-    Object.values(riderDropoff).forEach((p) => add(p.x, p.y));
-    vehicles.forEach((v) => {
-      const p = vehiclePos(v.color);
-      add(p.x, p.y);
-    });
-    if (xs.length === 0) {
-      return { x: 0, y: 0, w: N * CELL, h: N * CELL };
-    }
-    const pad = 1.4; // grid units of breathing room
-    const minX = Math.min(...xs) - pad;
-    const minY = Math.min(...ys) - pad;
-    const maxX = Math.max(...xs) + pad;
-    const maxY = Math.max(...ys) + pad;
-    return {
-      x: minX * CELL,
-      y: minY * CELL,
-      w: (maxX - minX) * CELL,
-      h: (maxY - minY) * CELL,
+
+    const marker = (cx: number, cy: number, hw: number, hh: number): Box => {
+      const b = { cx, cy, hw, hh };
+      occupied.push(b);
+      allBoxes.push(b);
+      return b;
     };
-  }, [map, riderPickup, riderDropoff, vehicles, vehiclePos, N]);
+    (map.landmarks ?? []).forEach((l) =>
+      marker(l.x * CELL, l.y * CELL, MARK.landmark, MARK.landmark),
+    );
+    if (map.origin) marker(map.origin.x * CELL, map.origin.y * CELL, MARK.landmark, MARK.landmark);
+    riders.forEach((r) => {
+      const pu = riderPickup[r.letter];
+      marker(pu.x * CELL, pu.y * CELL, MARK.personHW, MARK.personHH);
+      const dp = riderDropoff[r.letter];
+      if (dp) marker(dp.x * CELL, dp.y * CELL, MARK.dropX, MARK.dropX);
+    });
+    vehicles.forEach((v) => {
+      const p = vehicleDefault[v.color] ?? vehiclePos(v.color);
+      marker(p.x * CELL, p.y * CELL, MARK.carHW, MARK.carHH);
+    });
+
+    // Floating labels, placed in priority order (long landmark names first).
+    const out: { key: string; text: string; box: Box; fontSize: number }[] = [];
+    const place = (
+      key: string,
+      anchor: Pt,
+      half: { hw: number; hh: number },
+      text: string,
+      fontSize: number,
+    ) => {
+      const box = placeLabel(anchor, half, text, fontSize, occupied);
+      occupied.push(box);
+      allBoxes.push(box);
+      out.push({ key, text, box, fontSize });
+    };
+
+    (map.landmarks ?? []).forEach((l, i) =>
+      place(
+        `lm-${i}`,
+        { x: l.x * CELL, y: l.y * CELL },
+        { hw: MARK.landmark, hh: MARK.landmark },
+        l.label,
+        12,
+      ),
+    );
+    if (map.origin)
+      place(
+        'depot',
+        { x: map.origin.x * CELL, y: map.origin.y * CELL },
+        { hw: MARK.landmark, hh: MARK.landmark },
+        map.origin.label,
+        12,
+      );
+    riders.forEach((r) => {
+      const pu = riderPickup[r.letter];
+      place(
+        `rider-${r.letter}`,
+        { x: pu.x * CELL, y: pu.y * CELL },
+        { hw: MARK.personHW, hh: MARK.personHH },
+        `Rider ${r.letter}`,
+        11,
+      );
+      const dp = riderDropoff[r.letter];
+      if (dp)
+        place(
+          `drop-${r.letter}`,
+          { x: dp.x * CELL, y: dp.y * CELL },
+          { hw: MARK.dropX, hh: MARK.dropX },
+          `drop ${r.letter}`,
+          11,
+        );
+    });
+
+    const labelMap: Record<string, { text: string; box: Box; fontSize: number }> = {};
+    out.forEach((o) => (labelMap[o.key] = { text: o.text, box: o.box, fontSize: o.fontSize }));
+
+    if (allBoxes.length === 0) {
+      return { vb: { x: 0, y: 0, w: N * CELL, h: N * CELL }, labels: labelMap };
+    }
+    const pad = 8; // user units
+    const minX = Math.min(...allBoxes.map((b) => b.cx - b.hw)) - pad;
+    const minY = Math.min(...allBoxes.map((b) => b.cy - b.hh)) - pad;
+    const maxX = Math.max(...allBoxes.map((b) => b.cx + b.hw)) + pad;
+    const maxY = Math.max(...allBoxes.map((b) => b.cy + b.hh)) + pad;
+    return {
+      vb: { x: minX, y: minY, w: maxX - minX, h: maxY - minY },
+      labels: labelMap,
+    };
+  }, [map, riders, vehicles, riderPickup, riderDropoff, vehicleDefault, vehiclePos, N]);
+
+  // Distinct colours that need a tint filter (vehicle cars + rider people).
+  const tintColors = useMemo(() => {
+    const set = new Set<string>();
+    vehicles.forEach((v) => set.add(VEHICLE_HEX[v.color]));
+    riders.forEach((r) => set.add(r.personColor));
+    return Array.from(set);
+  }, [vehicles, riders]);
 
   // ----- drag (vehicles only) -----
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -240,8 +387,8 @@ export default function MapCanvas({
   return (
     <div className="flex flex-col gap-1.5">
       <p className="text-[11px] italic text-[var(--muted)] leading-snug">
-        Drag the vehicles to where you&rsquo;d assign them. Riders show as a dot
-        (pickup) and an X (dropoff) in their colour.
+        Drag the cars to where you&rsquo;d assign them. Each rider shows as a
+        person (pickup) and an X (dropoff) in their colour.
       </p>
       <svg
         ref={svgRef}
@@ -249,6 +396,25 @@ export default function MapCanvas({
         viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
         className="w-full border border-[#999] bg-[#fcfaf3]"
       >
+        <defs>
+          {/* Recolour each black-on-transparent icon to the marker's colour:
+              flood the colour, keep it only where the icon is opaque. */}
+          {tintColors.map((c) => (
+            <filter
+              key={tintId(c)}
+              id={tintId(c)}
+              colorInterpolationFilters="sRGB"
+              x="0"
+              y="0"
+              width="100%"
+              height="100%"
+            >
+              <feFlood floodColor={c} result="flood" />
+              <feComposite in="flood" in2="SourceGraphic" operator="in" />
+            </filter>
+          ))}
+        </defs>
+
         {/* Streets */}
         {(map.streets ?? []).map((s, i) => (
           <line
@@ -264,102 +430,83 @@ export default function MapCanvas({
           />
         ))}
 
-        {/* Landmarks */}
-        {(map.landmarks ?? []).map((l, i) => {
-          const cx = l.x * CELL;
-          const cy = l.y * CELL;
-          const lx = cx + (l.labelDX ?? 8);
-          const ly = cy + (l.labelDY ?? -8);
-          return (
-            <g key={`lm-${i}`} pointerEvents="none">
-              <rect x={cx - 5} y={cy - 5} width={10} height={10} fill="#1a1a1a" />
-              <text
-                x={lx}
-                y={ly}
-                fontSize={12}
-                fill="#1a1a1a"
-                textAnchor={l.labelAnchor ?? 'start'}
-              >
-                {l.label}
-              </text>
-            </g>
-          );
-        })}
-
-        {/* Depot — same square icon as the landmarks */}
+        {/* Landmark + depot squares (labels drawn in the labels layer) */}
+        {(map.landmarks ?? []).map((l, i) => (
+          <rect
+            key={`lm-${i}`}
+            x={l.x * CELL - MARK.landmark}
+            y={l.y * CELL - MARK.landmark}
+            width={MARK.landmark * 2}
+            height={MARK.landmark * 2}
+            fill="#1a1a1a"
+            pointerEvents="none"
+          />
+        ))}
         {map.origin && (
-          <g pointerEvents="none">
-            <rect
-              x={map.origin.x * CELL - 5}
-              y={map.origin.y * CELL - 5}
-              width={10}
-              height={10}
-              fill="#1a1a1a"
-            />
-            <text
-              x={map.origin.x * CELL + (map.origin.labelDX ?? 8)}
-              y={map.origin.y * CELL + (map.origin.labelDY ?? -8)}
-              fontSize={12}
-              fill="#1a1a1a"
-              textAnchor="start"
-            >
-              {map.origin.label}
-            </text>
-          </g>
+          <rect
+            x={map.origin.x * CELL - MARK.landmark}
+            y={map.origin.y * CELL - MARK.landmark}
+            width={MARK.landmark * 2}
+            height={MARK.landmark * 2}
+            fill="#1a1a1a"
+            pointerEvents="none"
+          />
         )}
 
-        {/* Riders: pickup dot + dropoff X (fixed) */}
+        {/* Riders: person icon (pickup) + X (dropoff) */}
         {riders.map((r) => {
           const c = r.personColor;
           const pu = riderPickup[r.letter];
           const dp = riderDropoff[r.letter];
           return (
             <g key={`rider-${r.letter}`} pointerEvents="none">
-              <circle cx={pu.x * CELL} cy={pu.y * CELL} r={8} fill={c} stroke="#1a1a1a" strokeWidth={2} />
-              <text x={pu.x * CELL} y={pu.y * CELL + 22} fontSize={11} fill="#1a1a1a" textAnchor="middle">
-                {`Rider ${r.letter}`}
-              </text>
+              <image
+                href="/icons/person.png"
+                x={pu.x * CELL - MARK.personHW}
+                y={pu.y * CELL - MARK.personHH}
+                width={MARK.personHW * 2}
+                height={MARK.personHH * 2}
+                filter={`url(#${tintId(c)})`}
+              />
               {dp && (
                 <>
                   <line x1={dp.x * CELL - 8} y1={dp.y * CELL - 8} x2={dp.x * CELL + 8} y2={dp.y * CELL + 8} stroke={c} strokeWidth={4} strokeLinecap="round" />
                   <line x1={dp.x * CELL - 8} y1={dp.y * CELL + 8} x2={dp.x * CELL + 8} y2={dp.y * CELL - 8} stroke={c} strokeWidth={4} strokeLinecap="round" />
-                  <text x={dp.x * CELL} y={dp.y * CELL + 22} fontSize={11} fill="#1a1a1a" textAnchor="middle">
-                    drop {r.letter}
-                  </text>
                 </>
               )}
             </g>
           );
         })}
 
-        {/* Vehicles: draggable (the participant manipulates these) */}
+        {/* Vehicles: draggable car icon + number badge */}
         {vehicles.map((v) => {
           const p = vehiclePos(v.color);
           const cx = p.x * CELL;
           const cy = p.y * CELL;
+          const hex = VEHICLE_HEX[v.color];
           return (
             <g
               key={`veh-${v.color}`}
               onMouseDown={(e) => startDrag(e, v.color)}
               style={{ cursor: 'grab' }}
             >
-              <rect
-                x={cx - 12}
-                y={cy - 8}
-                width={24}
-                height={16}
-                rx={3}
-                ry={3}
-                fill={VEHICLE_HEX[v.color]}
-                stroke="#1a1a1a"
-                strokeWidth={2}
+              <image
+                href="/icons/car.png"
+                x={cx - MARK.carHW}
+                y={cy - MARK.carHH}
+                width={MARK.carHW * 2}
+                height={MARK.carHH * 2}
+                filter={`url(#${tintId(hex)})`}
               />
+              {/* number badge (top-right of the car) */}
+              <circle cx={cx + MARK.carHW - 4} cy={cy - MARK.carHH + 4} r={6.5} fill="white" stroke="#1a1a1a" strokeWidth={1} pointerEvents="none" />
               <text
-                x={cx}
-                y={cy + 4}
-                fontSize={11}
-                fill="white"
+                x={cx + MARK.carHW - 4}
+                y={cy - MARK.carHH + 4}
+                fontSize={9}
+                fill="#1a1a1a"
                 textAnchor="middle"
+                dominantBaseline="central"
                 fontWeight="bold"
                 pointerEvents="none"
               >
@@ -368,6 +515,22 @@ export default function MapCanvas({
             </g>
           );
         })}
+
+        {/* Labels layer (collision-placed) — on top of everything */}
+        {Object.entries(labels).map(([key, l]) => (
+          <text
+            key={`lbl-${key}`}
+            x={l.box.cx}
+            y={l.box.cy}
+            fontSize={l.fontSize}
+            fill="#1a1a1a"
+            textAnchor="middle"
+            dominantBaseline="central"
+            pointerEvents="none"
+          >
+            {l.text}
+          </text>
+        ))}
       </svg>
     </div>
   );
