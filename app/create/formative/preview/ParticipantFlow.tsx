@@ -17,6 +17,7 @@ import {
   Separator as PanelResizeHandle,
 } from 'react-resizable-panels';
 import { enumerateScreens, type Screen } from '@/lib/study/screens';
+import { toRoman } from '@/lib/study/roman';
 import type {
   LoadedProject,
   Module,
@@ -2170,7 +2171,7 @@ function ScenarioReadStep({
                   New this screen
                 </span>
                 <span className="text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
-                  Scenario {scenarioIdx + 1} of {totalScenarios}
+                  Scenario {toRoman(scenarioIdx + 1)} of {totalScenarios}
                 </span>
               </div>
               <h3 className="text-xl font-medium">{scenario.title}</h3>
@@ -2253,7 +2254,7 @@ function PonderStep({
       <Centered>
         <div className="space-y-6">
           <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
-            Scenario {scenarioIdx + 1} of {totalScenarios} · Pause and ponder
+            Scenario {toRoman(scenarioIdx + 1)} of {totalScenarios} · Pause and ponder
           </p>
           {showOverride ? (
             <p className="text-2xl leading-relaxed whitespace-pre-wrap">
@@ -2325,7 +2326,7 @@ function ScenarioReviseStep({
       <Panel defaultSize="50%" minSize="30%" maxSize="72%">
         <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
           <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
-            Scenario {scenarioIdx + 1} of {totalScenarios} · Revising specifications
+            Scenario {toRoman(scenarioIdx + 1)} of {totalScenarios} · Revising specifications
           </p>
           <CollapsibleRequirements title={t.title} requirements={t.requirements} />
           {/* Scenario on top, map stacked full-width beneath it (bigger map). */}
@@ -2336,7 +2337,7 @@ function ScenarioReviseStep({
                   New this screen
                 </span>
                 <span className="text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
-                  Scenario {scenarioIdx + 1}
+                  Scenario {toRoman(scenarioIdx + 1)}
                 </span>
               </div>
               <h3 className="font-medium">{scenario.title}</h3>
@@ -2503,7 +2504,7 @@ function ExampleScenarioReadStep({
                   New this screen
                 </span>
                 <span className="text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
-                  Scenario {scenarioIdx + 1} of {totalScenarios}
+                  Scenario {toRoman(scenarioIdx + 1)} of {totalScenarios}
                 </span>
               </div>
               <h3 className="text-xl font-medium">{scenario.title}</h3>
@@ -2555,7 +2556,7 @@ function ExampleScenarioReviseStep({
         <Panel defaultSize="55%" minSize="30%" maxSize="75%">
           <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
             <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
-              Scenario {scenarioIdx + 1} of {totalScenarios} · Revising
+              Scenario {toRoman(scenarioIdx + 1)} of {totalScenarios} · Revising
             </p>
             <div className="opacity-60">
               <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
@@ -2572,7 +2573,7 @@ function ExampleScenarioReviseStep({
                   New this screen
                 </span>
                 <span className="text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
-                  Scenario {scenarioIdx + 1}
+                  Scenario {toRoman(scenarioIdx + 1)}
                 </span>
               </div>
               <h3 className="font-medium">{scenario.title}</h3>
@@ -2812,7 +2813,7 @@ function ScenarioRetroStep({
       <Panel defaultSize="50%" minSize="30%" maxSize="70%">
         <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
           <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
-            {scenarioTitle} · Scenario {scenarioIdx + 1} of {totalScenarios} ·
+            {scenarioTitle} · Scenario {toRoman(scenarioIdx + 1)} of {totalScenarios} ·
             Retrospective Q{questionIdx + 1} of {totalQuestions}
           </p>
           <p className="text-lg leading-relaxed whitespace-pre-wrap">
