@@ -286,32 +286,22 @@ export default function MapCanvas({
           );
         })}
 
-        {/* Origin */}
+        {/* Depot — same square icon as the landmarks */}
         {map.origin && (
           <g pointerEvents="none">
-            <circle
-              cx={map.origin.x * CELL}
-              cy={map.origin.y * CELL}
-              r={13}
-              fill="#963b2a"
-              stroke="#1a1a1a"
+            <rect
+              x={map.origin.x * CELL - 5}
+              y={map.origin.y * CELL - 5}
+              width={10}
+              height={10}
+              fill="#1a1a1a"
             />
             <text
-              x={map.origin.x * CELL}
-              y={map.origin.y * CELL + 5}
-              fontSize={14}
-              fill="white"
-              textAnchor="middle"
-              fontWeight="bold"
-            >
-              ★
-            </text>
-            <text
-              x={map.origin.x * CELL + (map.origin.labelDX ?? 16)}
-              y={map.origin.y * CELL + (map.origin.labelDY ?? -12)}
+              x={map.origin.x * CELL + (map.origin.labelDX ?? 8)}
+              y={map.origin.y * CELL + (map.origin.labelDY ?? -8)}
               fontSize={12}
-              fill="#963b2a"
-              fontWeight="bold"
+              fill="#1a1a1a"
+              textAnchor="start"
             >
               {map.origin.label}
             </text>
@@ -325,18 +315,6 @@ export default function MapCanvas({
           const dp = riderDropoff[r.letter];
           return (
             <g key={`rider-${r.letter}`} pointerEvents="none">
-              {dp && (
-                <line
-                  x1={pu.x * CELL}
-                  y1={pu.y * CELL}
-                  x2={dp.x * CELL}
-                  y2={dp.y * CELL}
-                  stroke={c}
-                  strokeWidth={1.5}
-                  strokeDasharray="4 3"
-                  opacity={0.55}
-                />
-              )}
               <circle cx={pu.x * CELL} cy={pu.y * CELL} r={8} fill={c} stroke="#1a1a1a" strokeWidth={2} />
               <text x={pu.x * CELL} y={pu.y * CELL + 22} fontSize={11} fill="#1a1a1a" textAnchor="middle">
                 {`Rider ${r.letter}`}

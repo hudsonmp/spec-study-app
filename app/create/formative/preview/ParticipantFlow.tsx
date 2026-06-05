@@ -2159,12 +2159,12 @@ function ScenarioReadStep({
 }) {
   return (
     <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
-      <Panel defaultSize="62%" minSize="35%" maxSize="78%">
+      <Panel defaultSize="50%" minSize="30%" maxSize="72%">
         <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
           <CollapsibleRequirements title={t.title} requirements={t.requirements} />
-          {/* Scenario and map side by side; the map wraps below if too narrow. */}
-          <div className="flex flex-wrap gap-3 items-start">
-            <div className="flex-1 min-w-[260px] border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
+          {/* Scenario on top, map stacked full-width beneath it (bigger map). */}
+          <div className="flex flex-col gap-3">
+            <div className="border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
               <div className="flex justify-between items-baseline mb-1">
                 <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--accent)]">
                   New this screen
@@ -2177,23 +2177,21 @@ function ScenarioReadStep({
               <ClauseList clauses={scenario.clauses} highlightable />
             </div>
             {t.cityMap && (
-              <div className="shrink-0 w-[320px] max-w-full">
-                <MapCanvas
-                  map={t.cityMap}
-                  scenarioId={scenario.id}
-                  storageKey={`pf:${projectId}:${moduleId}`}
-                  onEvent={(eventType, payload) =>
-                    save.recordEvent(eventType, payload)
-                  }
-                  seededMarkers={scenario.seededMarkers ?? []}
-                />
-              </div>
+              <MapCanvas
+                map={t.cityMap}
+                scenarioId={scenario.id}
+                storageKey={`pf:${projectId}:${moduleId}`}
+                onEvent={(eventType, payload) =>
+                  save.recordEvent(eventType, payload)
+                }
+                seededMarkers={scenario.seededMarkers ?? []}
+              />
             )}
           </div>
         </section>
       </Panel>
       <SplitHandle />
-      <Panel defaultSize="38%" minSize="22%" maxSize="65%">
+      <Panel defaultSize="50%" minSize="28%" maxSize="70%">
         {/* Read beat: spec is READ-ONLY. The participant locates where the
             scenario isn't yet handled and talks through it; editing happens on
             the next (revise) screen. Separating decide-from-write keeps the
@@ -2324,15 +2322,15 @@ function ScenarioReviseStep({
 }) {
   return (
     <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
-      <Panel defaultSize="62%" minSize="35%" maxSize="78%">
+      <Panel defaultSize="50%" minSize="30%" maxSize="72%">
         <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
           <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
             Scenario {scenarioIdx + 1} of {totalScenarios} · Revising specifications
           </p>
           <CollapsibleRequirements title={t.title} requirements={t.requirements} />
-          {/* Scenario and map side by side; the map wraps below if too narrow. */}
-          <div className="flex flex-wrap gap-3 items-start">
-            <div className="flex-1 min-w-[260px] border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
+          {/* Scenario on top, map stacked full-width beneath it (bigger map). */}
+          <div className="flex flex-col gap-3">
+            <div className="border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
               <div className="flex justify-between items-baseline mb-1">
                 <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--accent)]">
                   New this screen
@@ -2345,23 +2343,21 @@ function ScenarioReviseStep({
               <ClauseList clauses={scenario.clauses} highlightable />
             </div>
             {t.cityMap && (
-              <div className="shrink-0 w-[320px] max-w-full">
-                <MapCanvas
-                  map={t.cityMap}
-                  scenarioId={scenario.id}
-                  storageKey={`pf:${projectId}:${moduleId}`}
-                  onEvent={(eventType, payload) =>
-                    save.recordEvent(eventType, payload)
-                  }
-                  seededMarkers={scenario.seededMarkers ?? []}
-                />
-              </div>
+              <MapCanvas
+                map={t.cityMap}
+                scenarioId={scenario.id}
+                storageKey={`pf:${projectId}:${moduleId}`}
+                onEvent={(eventType, payload) =>
+                  save.recordEvent(eventType, payload)
+                }
+                seededMarkers={scenario.seededMarkers ?? []}
+              />
             )}
           </div>
         </section>
       </Panel>
       <SplitHandle />
-      <Panel defaultSize="38%" minSize="22%" maxSize="65%">
+      <Panel defaultSize="50%" minSize="28%" maxSize="70%">
         <SpecColumn
           spec={spec}
           setSpec={setSpec}
