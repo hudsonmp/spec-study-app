@@ -1221,38 +1221,35 @@ function TaskEditor({
       )}
 
       <Section
-        title={`Scenarios (${m.scenarios.length}/3)`}
-        onAdd={
-          m.scenarios.length < 3
-            ? () =>
-                p((t) => {
-                  const prev = t.scenarios[t.scenarios.length - 1];
-                  // Subsequent scenarios clone the prior one so the
-                  // researcher can layer NEW/superseded markers; first
-                  // scenario starts blank with default Given/When/Then.
-                  const clonedClauses: Clause[] = prev
-                    ? prev.clauses.map((c) => ({
-                        id: uid(),
-                        type: c.type,
-                        text: c.text,
-                        // Carried-over clauses lose the previous "new"
-                        // marker (they are no longer new in this scenario)
-                        // but keep "superseded" so prior crossouts persist.
-                        marker: c.marker === 'superseded' ? 'superseded' : undefined,
-                      }))
-                    : [
-                        { id: uid(), type: 'Given', text: '' },
-                        { id: uid(), type: 'When', text: '' },
-                        { id: uid(), type: 'Then', text: '' },
-                      ];
-                  t.scenarios.push({
-                    id: uid(),
-                    title: `Scenario ${t.scenarios.length + 1}`,
-                    facilitatorNote: '',
-                    clauses: clonedClauses,
-                  });
-                })
-            : undefined
+        title={`Scenarios (${m.scenarios.length})`}
+        onAdd={() =>
+          p((t) => {
+            const prev = t.scenarios[t.scenarios.length - 1];
+            // Subsequent scenarios clone the prior one so the researcher can
+            // layer NEW/superseded markers; first scenario starts blank with
+            // default Given/When/Then.
+            const clonedClauses: Clause[] = prev
+              ? prev.clauses.map((c) => ({
+                  id: uid(),
+                  type: c.type,
+                  text: c.text,
+                  // Carried-over clauses lose the previous "new" marker (they
+                  // are no longer new in this scenario) but keep "superseded"
+                  // so prior crossouts persist.
+                  marker: c.marker === 'superseded' ? 'superseded' : undefined,
+                }))
+              : [
+                  { id: uid(), type: 'Given', text: '' },
+                  { id: uid(), type: 'When', text: '' },
+                  { id: uid(), type: 'Then', text: '' },
+                ];
+            t.scenarios.push({
+              id: uid(),
+              title: `Scenario ${t.scenarios.length + 1}`,
+              facilitatorNote: '',
+              clauses: clonedClauses,
+            });
+          })
         }
       >
         {m.scenarios.map((sc, i) => (
