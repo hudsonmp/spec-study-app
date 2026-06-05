@@ -60,6 +60,7 @@ import {
   moveInArray,
 } from '@/lib/study/reducer';
 import { enumerateScreens, labelFor } from '@/lib/study/screens';
+import { toRoman } from '@/lib/study/roman';
 import { renderCityMapSvg } from '@/lib/study/city-map';
 import { shellProjectContent } from '@/lib/study/shell';
 
@@ -1221,38 +1222,41 @@ function TaskEditor({
       )}
 
       <Section
-        title={`Scenarios (${m.scenarios.length}/3)`}
-        onAdd={
-          m.scenarios.length < 3
-            ? () =>
-                p((t) => {
-                  const prev = t.scenarios[t.scenarios.length - 1];
-                  // Subsequent scenarios clone the prior one so the
-                  // researcher can layer NEW/superseded markers; first
-                  // scenario starts blank with default Given/When/Then.
-                  const clonedClauses: Clause[] = prev
-                    ? prev.clauses.map((c) => ({
-                        id: uid(),
-                        type: c.type,
-                        text: c.text,
-                        // Carried-over clauses lose the previous "new"
-                        // marker (they are no longer new in this scenario)
-                        // but keep "superseded" so prior crossouts persist.
-                        marker: c.marker === 'superseded' ? 'superseded' : undefined,
-                      }))
-                    : [
-                        { id: uid(), type: 'Given', text: '' },
-                        { id: uid(), type: 'When', text: '' },
-                        { id: uid(), type: 'Then', text: '' },
-                      ];
-                  t.scenarios.push({
-                    id: uid(),
-                    title: `Scenario ${t.scenarios.length + 1}`,
-                    facilitatorNote: '',
-                    clauses: clonedClauses,
-                  });
-                })
-            : undefined
+        title={`Scenarios (${m.scenarios.length})`}
+        onAdd={() =>
+          p((t) => {
+            const prev = t.scenarios[t.scenarios.length - 1];
+            // Subsequent scenarios clone the prior one so the researcher can
+            // layer NEW/superseded markers; first scenario starts blank with
+            // default Given/When/Then.
+            const clonedClauses: Clause[] = prev
+              ? prev.clauses.map((c) => ({
+                  id: uid(),
+                  type: c.type,
+                  text: c.text,
+                  // Carried-over clauses lose the previous "new" marker (they
+                  // are no longer new in this scenario) but keep "superseded"
+                  // so prior crossouts persist.
+                  marker: c.marker === 'superseded' ? 'superseded' : undefined,
+                }))
+              : [
+                  { id: uid(), type: 'Given', text: '' },
+                  { id: uid(), type: 'When', text: '' },
+                  { id: uid(), type: 'Then', text: '' },
+                ];
+            t.scenarios.push({
+              id: uid(),
+              title: `Scenario ${toRoman(t.scenarios.length + 1)}`,
+              facilitatorNote: '',
+              clauses: clonedClauses,
+              // Inherit the prior scenario's map (vehicles + rider pickup/
+              // dropoff) so each shorter scenario builds on the last; the
+              // researcher then tweaks rather than re-placing every marker.
+              seededMarkers: prev?.seededMarkers
+                ? structuredClone(prev.seededMarkers)
+                : undefined,
+            });
+          })
         }
       >
         {m.scenarios.map((sc, i) => (
@@ -1782,7 +1786,7 @@ function TaskExampleEditor({
                   ...example.scenarios,
                   {
                     id: uid(),
-                    title: `Scenario ${example.scenarios.length + 1}`,
+                    title: `Scenario ${toRoman(example.scenarios.length + 1)}`,
                     facilitatorNote: '',
                     clauses: clonedClauses,
                   },
@@ -2251,7 +2255,7 @@ function ScenarioBlock({
   return (
     <div className="border border-[var(--rule)] bg-white p-3 mb-2">
       <div className="flex gap-2 items-baseline mb-2">
-        <span className="text-sm text-[var(--muted)] w-6">{index + 1}.</span>
+        <span className="text-sm text-[var(--muted)] w-6">{toRoman(index + 1)}.</span>
         <input
           className="text-[15px] font-medium flex-1 border-0 border-b border-dashed border-[var(--rule)] py-1 bg-transparent focus:outline-none focus:border-[var(--accent)]"
           value={scenario.title}

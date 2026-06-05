@@ -17,6 +17,7 @@ import {
   Separator as PanelResizeHandle,
 } from 'react-resizable-panels';
 import { enumerateScreens, type Screen } from '@/lib/study/screens';
+import { toRoman } from '@/lib/study/roman';
 import type {
   LoadedProject,
   Module,
@@ -33,6 +34,10 @@ import type {
   Scenario,
   Entity,
   Element as EntityElement,
+  CityMap,
+  SeededMarker,
+  SeededVehicleColor,
+  SeededPersonLetter,
 } from '@/lib/types/study';
 import {
   MODULE_TYPE_LABEL,
@@ -40,7 +45,31 @@ import {
   isPersistedToDb,
   DEFAULT_WARMUP_COPY,
   DEFAULT_TASK_COPY,
+  PERSON_PALETTE,
 } from '@/lib/types/study';
+
+// Random demo markers for the task-intro map (introduces the mechanic before
+// the real scenarios). Cars + people scattered across the map's landmarks.
+function randomDemoMarkers(map: CityMap): SeededMarker[] {
+  const pool = (map.landmarks ?? []).map((l) => l.label);
+  if (map.origin?.label) pool.push(map.origin.label);
+  if (pool.length === 0) return [];
+  const pick = () => pool[Math.floor(Math.random() * pool.length)];
+  const colors: SeededVehicleColor[] = ['red', 'blue', 'green'];
+  const letters: SeededPersonLetter[] = ['A', 'B', 'C'];
+  const out: SeededMarker[] = [];
+  colors.forEach((color) => out.push({ kind: 'vehicle', color, landmarkLabel: pick() }));
+  letters.forEach((letter, i) =>
+    out.push({
+      kind: 'person',
+      letter,
+      personColor: PERSON_PALETTE[i % PERSON_PALETTE.length],
+      landmarkLabel: pick(),
+      dropoffLandmarkLabel: pick(),
+    }),
+  );
+  return out;
+}
 import {
   recordEventAction,
   upsertResponseAction,
@@ -1489,9 +1518,6 @@ function ThinkAloudExampleRunner({
       mod.copy = { ...(mod.copy ?? {}), [key]: v };
     });
   const [phase, setPhase] = useState<WarmupPhase>(initialPhase ?? 'intro');
-  // Open answer box for the demo — empty, editable (the researcher narrates
-  // filling it). Not persisted; this is a display-only worked example.
-  const [answer, setAnswer] = useState('');
 
   function advanceTo(next: WarmupPhase) {
     save.recordEvent('step_advance', { from: phase, to: next });
@@ -1563,13 +1589,16 @@ function ThinkAloudExampleRunner({
                   <span className="block text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-1">
                     {copy.answerInputLabel}
                   </span>
+                  {/* Display-only demo: non-interactive, greyed placeholder. */}
                   <input
                     type="text"
-                    value={answer}
-                    onChange={(e) => setAnswer(e.target.value)}
+                    value="STUDY"
+                    readOnly
+                    tabIndex={-1}
+                    aria-disabled
                     autoComplete="off"
                     spellCheck={false}
-                    className="w-full border border-[var(--rule)] bg-white px-3 py-2 font-mono tracking-[0.25em] text-center text-lg focus:outline-none focus:border-[var(--accent)]"
+                    className="w-full border border-[var(--rule)] bg-[var(--panel)] px-3 py-2 font-mono tracking-[0.25em] text-center text-lg text-[var(--muted)] cursor-default select-none focus:outline-none"
                   />
                 </label>
               </div>
@@ -1835,6 +1864,9 @@ function TaskRunner({
         title={t.title}
         copy={t.copy}
         onContinue={next}
+        cityMap={t.cityMap}
+        projectId={projectId}
+        recordEvent={(eventType, payload) => save.recordEvent(eventType, payload)}
       />
     );
   }
@@ -1937,17 +1969,11 @@ function TaskRunner({
     return (
       <ScenarioRetroStep
         question={q.text}
-        boxHeight={q.boxHeight}
         scenarioTitle={scenario.title}
         scenarioIdx={step.idx}
         totalScenarios={t.scenarios.length}
         questionIdx={step.qIdx}
         totalQuestions={retro.length}
-        value={retroAnswers[answerKey] ?? ''}
-        onChange={(v) => {
-          setRetroAnswer(answerKey, v);
-          saveRetro(answerKey, v);
-        }}
         spec={spec}
         entities={entities}
         onContinue={next}
@@ -2015,6 +2041,9 @@ function TaskIntro({
   title,
   copy,
   onContinue,
+  cityMap,
+  projectId,
+  recordEvent,
 }: {
   moduleId: string;
   moduleNumber: number;
@@ -2023,31 +2052,61 @@ function TaskIntro({
   title: string;
   copy: TaskContent['copy'];
   onContinue: () => void;
+  cityMap?: CityMap;
+  projectId: string;
+  recordEvent: (eventType: string, payload: unknown) => void;
 }) {
   const annotation = isWarmup
     ? copy?.warmupAnnotation?.trim() || DEFAULT_TASK_COPY.warmupAnnotation
     : copy?.realAnnotation?.trim() || DEFAULT_TASK_COPY.realAnnotation;
-  return (
-    <Centered>
-      <div className="space-y-6">
-        <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
-          Module {moduleNumber} of {total}
-        </p>
-        <h2 className="text-3xl font-medium tracking-tight">{title}</h2>
-        <EditableCallout
-          moduleId={moduleId}
-          copyKey={isWarmup ? 'warmupAnnotation' : 'realAnnotation'}
-          value={annotation}
-          className={
-            'text-sm italic px-4 py-3 whitespace-pre-wrap ' +
-            (isWarmup
-              ? 'text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a]'
-              : 'text-[var(--muted)] bg-[var(--panel)] border border-[var(--rule)]')
-          }
-        />
-        <ContinueButton onClick={onContinue} />
-      </div>
-    </Centered>
+  // Random demo markers, fixed for this mount so they don't reshuffle on
+  // re-render. Introduces the interactive map before the task proper.
+  const demoMarkers = useMemo(
+    () => (cityMap ? randomDemoMarkers(cityMap) : []),
+    [cityMap],
+  );
+  const content = (
+    <div className="space-y-6">
+      <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
+        Module {moduleNumber} of {total}
+      </p>
+      <h2 className="text-3xl font-medium tracking-tight">{title}</h2>
+      <EditableCallout
+        moduleId={moduleId}
+        copyKey={isWarmup ? 'warmupAnnotation' : 'realAnnotation'}
+        value={annotation}
+        className={
+          'text-sm italic px-4 py-3 whitespace-pre-wrap ' +
+          (isWarmup
+            ? 'text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a]'
+            : 'text-[var(--muted)] bg-[var(--panel)] border border-[var(--rule)]')
+        }
+      />
+      {cityMap && (
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)] mb-1">
+            The map (try dragging a car)
+          </p>
+          <MapCanvas
+            map={cityMap}
+            scenarioId="intro-demo"
+            storageKey={`pf:${projectId}:${moduleId}`}
+            onEvent={recordEvent}
+            seededMarkers={demoMarkers}
+          />
+        </div>
+      )}
+      <ContinueButton onClick={onContinue} />
+    </div>
+  );
+  // With a map the intro needs the full scrollable column, not the vertically
+  // centered single-screen layout.
+  return cityMap ? (
+    <div className="flex-1 flex justify-center overflow-hidden min-h-0">
+      <section className="max-w-2xl w-full overflow-y-auto pr-1">{content}</section>
+    </div>
+  ) : (
+    <Centered>{content}</Centered>
   );
 }
 
@@ -2159,49 +2218,39 @@ function ScenarioReadStep({
 }) {
   return (
     <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
-      <Panel defaultSize="55%" minSize="30%" maxSize="75%">
+      <Panel defaultSize="50%" minSize="30%" maxSize="72%">
         <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
-          <div className="opacity-60">
-            <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
-              Prior
-            </span>
-            <h2 className="text-xl font-medium tracking-tight mt-1">
-              {t.title}
-            </h2>
-            <RequirementsBlock requirements={t.requirements} compact />
-          </div>
-          {/* Scenario (skinny) and the map sit side by side. */}
-          <div className="flex gap-3 items-start">
-            <div className="flex-1 min-w-0 border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
+          <CollapsibleRequirements title={t.title} requirements={t.requirements} />
+          {/* Scenario on top, map stacked full-width beneath it (bigger map). */}
+          <div className="flex flex-col gap-3">
+            <div className="border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
               <div className="flex justify-between items-baseline mb-1">
                 <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--accent)]">
                   New this screen
                 </span>
                 <span className="text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
-                  Scenario {scenarioIdx + 1} of {totalScenarios}
+                  Scenario {toRoman(scenarioIdx + 1)} of {totalScenarios}
                 </span>
               </div>
               <h3 className="text-xl font-medium">{scenario.title}</h3>
               <ClauseList clauses={scenario.clauses} highlightable />
             </div>
             {t.cityMap && (
-              <div className="shrink-0 w-[300px]">
-                <MapCanvas
-                  map={t.cityMap}
-                  scenarioId={scenario.id}
-                  storageKey={`pf:${projectId}:${moduleId}`}
-                  onEvent={(eventType, payload) =>
-                    save.recordEvent(eventType, payload)
-                  }
-                  seededMarkers={scenario.seededMarkers ?? []}
-                />
-              </div>
+              <MapCanvas
+                map={t.cityMap}
+                scenarioId={scenario.id}
+                storageKey={`pf:${projectId}:${moduleId}`}
+                onEvent={(eventType, payload) =>
+                  save.recordEvent(eventType, payload)
+                }
+                seededMarkers={scenario.seededMarkers ?? []}
+              />
             )}
           </div>
         </section>
       </Panel>
       <SplitHandle />
-      <Panel defaultSize="45%" minSize="25%" maxSize="70%">
+      <Panel defaultSize="50%" minSize="28%" maxSize="70%">
         {/* Read beat: spec is READ-ONLY. The participant locates where the
             scenario isn't yet handled and talks through it; editing happens on
             the next (revise) screen. Separating decide-from-write keeps the
@@ -2263,7 +2312,7 @@ function PonderStep({
       <Centered>
         <div className="space-y-6">
           <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
-            Scenario {scenarioIdx + 1} of {totalScenarios} · Pause and ponder
+            Scenario {toRoman(scenarioIdx + 1)} of {totalScenarios} · Pause and ponder
           </p>
           {showOverride ? (
             <p className="text-2xl leading-relaxed whitespace-pre-wrap">
@@ -2332,52 +2381,42 @@ function ScenarioReviseStep({
 }) {
   return (
     <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
-      <Panel defaultSize="55%" minSize="30%" maxSize="75%">
+      <Panel defaultSize="50%" minSize="30%" maxSize="72%">
         <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
           <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
-            Scenario {scenarioIdx + 1} of {totalScenarios} · Revising specifications
+            Scenario {toRoman(scenarioIdx + 1)} of {totalScenarios} · Revising specifications
           </p>
-          <div className="opacity-60">
-            <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
-              Prior
-            </span>
-            <h2 className="text-xl font-medium tracking-tight mt-1">
-              {t.title}
-            </h2>
-            <RequirementsBlock requirements={t.requirements} compact />
-          </div>
-          {/* Scenario (skinny) and the map sit side by side. */}
-          <div className="flex gap-3 items-start">
-            <div className="flex-1 min-w-0 border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
+          <CollapsibleRequirements title={t.title} requirements={t.requirements} />
+          {/* Scenario on top, map stacked full-width beneath it (bigger map). */}
+          <div className="flex flex-col gap-3">
+            <div className="border border-[var(--accent)]/40 bg-[var(--rule-soft)] p-3">
               <div className="flex justify-between items-baseline mb-1">
                 <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--accent)]">
                   New this screen
                 </span>
                 <span className="text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
-                  Scenario {scenarioIdx + 1}
+                  Scenario {toRoman(scenarioIdx + 1)}
                 </span>
               </div>
               <h3 className="font-medium">{scenario.title}</h3>
               <ClauseList clauses={scenario.clauses} highlightable />
             </div>
             {t.cityMap && (
-              <div className="shrink-0 w-[300px]">
-                <MapCanvas
-                  map={t.cityMap}
-                  scenarioId={scenario.id}
-                  storageKey={`pf:${projectId}:${moduleId}`}
-                  onEvent={(eventType, payload) =>
-                    save.recordEvent(eventType, payload)
-                  }
-                  seededMarkers={scenario.seededMarkers ?? []}
-                />
-              </div>
+              <MapCanvas
+                map={t.cityMap}
+                scenarioId={scenario.id}
+                storageKey={`pf:${projectId}:${moduleId}`}
+                onEvent={(eventType, payload) =>
+                  save.recordEvent(eventType, payload)
+                }
+                seededMarkers={scenario.seededMarkers ?? []}
+              />
             )}
           </div>
         </section>
       </Panel>
       <SplitHandle />
-      <Panel defaultSize="45%" minSize="25%" maxSize="70%">
+      <Panel defaultSize="50%" minSize="28%" maxSize="70%">
         <SpecColumn
           spec={spec}
           setSpec={setSpec}
@@ -2523,7 +2562,7 @@ function ExampleScenarioReadStep({
                   New this screen
                 </span>
                 <span className="text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
-                  Scenario {scenarioIdx + 1} of {totalScenarios}
+                  Scenario {toRoman(scenarioIdx + 1)} of {totalScenarios}
                 </span>
               </div>
               <h3 className="text-xl font-medium">{scenario.title}</h3>
@@ -2575,7 +2614,7 @@ function ExampleScenarioReviseStep({
         <Panel defaultSize="55%" minSize="30%" maxSize="75%">
           <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
             <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
-              Scenario {scenarioIdx + 1} of {totalScenarios} · Revising
+              Scenario {toRoman(scenarioIdx + 1)} of {totalScenarios} · Revising
             </p>
             <div className="opacity-60">
               <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
@@ -2592,7 +2631,7 @@ function ExampleScenarioReviseStep({
                   New this screen
                 </span>
                 <span className="text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">
-                  Scenario {scenarioIdx + 1}
+                  Scenario {toRoman(scenarioIdx + 1)}
                 </span>
               </div>
               <h3 className="font-medium">{scenario.title}</h3>
@@ -2798,28 +2837,22 @@ function ExampleSingleScreen({
 
 function ScenarioRetroStep({
   question,
-  boxHeight,
   scenarioTitle,
   scenarioIdx,
   totalScenarios,
   questionIdx,
   totalQuestions,
-  value,
-  onChange,
   spec,
   entities,
   onContinue,
   continueLabel,
 }: {
   question: string;
-  boxHeight: number;
   scenarioTitle: string;
   scenarioIdx: number;
   totalScenarios: number;
   questionIdx: number;
   totalQuestions: number;
-  value: string;
-  onChange: (v: string) => void;
   // The participant's spec + entity table, shown read-only (locked) beside the
   // retrospective question so they can reference what they wrote.
   spec: string;
@@ -2830,21 +2863,18 @@ function ScenarioRetroStep({
   return (
     <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
       <Panel defaultSize="50%" minSize="30%" maxSize="70%">
+        {/* Verbal-only: question + reference spec, no answer box. */}
         <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
           <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
-            {scenarioTitle} · Scenario {scenarioIdx + 1} of {totalScenarios} ·
+            {scenarioTitle} · Scenario {toRoman(scenarioIdx + 1)} of {totalScenarios} ·
             Retrospective Q{questionIdx + 1} of {totalQuestions}
           </p>
           <p className="text-lg leading-relaxed whitespace-pre-wrap">
             {question}
           </p>
-          <textarea
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            className="w-full border border-[var(--rule)] p-3 bg-[var(--panel)] focus:outline-none focus:border-[var(--accent)] leading-relaxed resize-y"
-            style={{ minHeight: `${Math.max(boxHeight, 1) * 80}px` }}
-            placeholder="Reflect on your reasoning…"
-          />
+          <p className="text-xs uppercase tracking-[0.16em] text-[var(--accent)]">
+            Answer aloud — spoken response only
+          </p>
           <div className="pt-2">
             <ContinueButton onClick={onContinue} label={continueLabel} />
           </div>
@@ -2986,29 +3016,19 @@ function RetrospectiveRunner({
   return (
     <PanelGroup orientation="horizontal" className="flex-1 min-h-0">
       <Panel defaultSize="50%" minSize="30%" maxSize="70%">
-        <section className="h-full flex flex-col gap-4 overflow-y-auto pr-3">
-          <header>
-            <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)]">
-              Retrospective · Question {stepIdx + 1} of {total}
-            </p>
-            <h2 className="text-2xl font-medium tracking-tight mt-1">
-              {m.title}
-            </h2>
-          </header>
-          <div>
-            <p className="text-xl leading-relaxed mb-4">
-              <strong>{stepIdx + 1}.</strong> {q.text}
-            </p>
-            <p className="text-xs italic text-[var(--muted)] mb-4">
-              Answer aloud — the researcher is recording your response.
-            </p>
-            <div className="pt-1">
-              <ContinueButton
-                onClick={advance}
-                label={stepIdx === total - 1 ? 'Done' : 'Next question'}
-              />
-            </div>
-          </div>
+        {/* Verbal-only: the question is centered, no answer box. */}
+        <section className="h-full flex flex-col items-center justify-center text-center gap-5 overflow-y-auto px-6">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--muted)]">
+            Retrospective · Question {stepIdx + 1} of {total}
+          </p>
+          <p className="text-2xl leading-relaxed max-w-md">{q.text}</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-[var(--accent)]">
+            Answer aloud — spoken response only
+          </p>
+          <ContinueButton
+            onClick={advance}
+            label={stepIdx === total - 1 ? 'Done' : 'Next question'}
+          />
         </section>
       </Panel>
       <SplitHandle />
@@ -3293,6 +3313,28 @@ function RequirementsBlock({
   );
 }
 
+// Requirements shown once per task, then collapsed (de-emphasized) on each
+// scenario screen — expandable on demand.
+function CollapsibleRequirements({
+  title,
+  requirements,
+}: {
+  title: string;
+  requirements: Requirement[];
+}) {
+  if (requirements.length === 0) return null;
+  return (
+    <details className="opacity-70">
+      <summary className="cursor-pointer text-[10px] uppercase tracking-[0.14em] text-[var(--muted)] hover:text-[var(--foreground)] select-none">
+        Requirements — {title} (expand)
+      </summary>
+      <div className="mt-2">
+        <RequirementsBlock requirements={requirements} compact />
+      </div>
+    </details>
+  );
+}
+
 function ClauseList({
   clauses,
   highlightable = false,
@@ -3307,12 +3349,34 @@ function ClauseList({
         (highlightable ? 'selection:bg-[#fffbea]' : '')
       }
     >
-      {clauses.map((c, ci) => (
-        <p key={c.id}>
-          <strong>{c.type}</strong> {c.text}
-          {ci === clauses.length - 1 ? '.' : ','}
-        </p>
-      ))}
+      {clauses.map((c) => {
+        // Show the cumulative-scenario change markers so the participant sees
+        // what's new vs struck-out this scenario.
+        if (c.marker === 'superseded') {
+          return (
+            <p key={c.id} className="opacity-55">
+              <s>
+                <strong>{c.type}</strong> {c.text}
+              </s>
+            </p>
+          );
+        }
+        if (c.marker === 'new') {
+          return (
+            <p key={c.id} className="font-medium">
+              <span className="text-[var(--accent)] text-[10px] uppercase tracking-wider mr-1">
+                New
+              </span>
+              <strong>{c.type}</strong> {c.text}
+            </p>
+          );
+        }
+        return (
+          <p key={c.id}>
+            <strong>{c.type}</strong> {c.text}
+          </p>
+        );
+      })}
     </div>
   );
 }
