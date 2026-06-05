@@ -82,6 +82,12 @@ const LABEL_DIRS: { dx: number; dy: number }[] = [
   { dx: -1, dy: -1 }, // NW
 ];
 
+// Concentric rings: when an anchor is crowded (a rider/vehicle sits ON a named
+// landmark), near candidates all collide, so push the label progressively
+// farther out until it clears. Verified to zero residual overlaps on the live
+// rideshare map via scripts/verify-map-labels.mjs.
+const LABEL_RINGS = [1, 1.8, 2.8, 4, 5.5];
+
 function placeLabel(
   anchor: Pt,
   anchorHalf: { hw: number; hh: number },
@@ -93,18 +99,20 @@ function placeLabel(
   const gap = 3;
   let best: Box | null = null;
   let bestScore = Infinity;
-  for (const d of LABEL_DIRS) {
-    const cx = anchor.x + d.dx * (anchorHalf.hw + gap + lh.hw);
-    const cy = anchor.y + d.dy * (anchorHalf.hh + gap + lh.hh);
-    const box: Box = { cx, cy, hw: lh.hw, hh: lh.hh };
-    let overlap = 0;
-    for (const o of occupied) overlap += boxOverlap(box, o);
-    const drift = Math.hypot(d.dx, d.dy); // mild preference for cardinal/near
-    const score = overlap * 1000 + drift;
-    if (score < bestScore) {
-      bestScore = score;
-      best = box;
-      if (overlap === 0 && (d.dx === 0 || d.dy === 0)) break; // clean cardinal — take it
+  for (const ring of LABEL_RINGS) {
+    for (const d of LABEL_DIRS) {
+      const cx = anchor.x + d.dx * (anchorHalf.hw + gap + lh.hw) * ring;
+      const cy = anchor.y + d.dy * (anchorHalf.hh + gap + lh.hh) * ring;
+      const box: Box = { cx, cy, hw: lh.hw, hh: lh.hh };
+      let overlap = 0;
+      for (const o of occupied) overlap += boxOverlap(box, o);
+      // low overlap dominates; then nearer ring; then cardinal over diagonal.
+      const score = overlap * 1000 + ring * 4 + Math.hypot(d.dx, d.dy);
+      if (score < bestScore) {
+        bestScore = score;
+        best = box;
+      }
+      if (overlap === 0 && ring === 1 && (d.dx === 0 || d.dy === 0)) return box;
     }
   }
   return best as Box;
