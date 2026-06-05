@@ -34,6 +34,10 @@ import type {
   Scenario,
   Entity,
   Element as EntityElement,
+  CityMap,
+  SeededMarker,
+  SeededVehicleColor,
+  SeededPersonLetter,
 } from '@/lib/types/study';
 import {
   MODULE_TYPE_LABEL,
@@ -41,7 +45,31 @@ import {
   isPersistedToDb,
   DEFAULT_WARMUP_COPY,
   DEFAULT_TASK_COPY,
+  PERSON_PALETTE,
 } from '@/lib/types/study';
+
+// Random demo markers for the task-intro map (introduces the mechanic before
+// the real scenarios). Cars + people scattered across the map's landmarks.
+function randomDemoMarkers(map: CityMap): SeededMarker[] {
+  const pool = (map.landmarks ?? []).map((l) => l.label);
+  if (map.origin?.label) pool.push(map.origin.label);
+  if (pool.length === 0) return [];
+  const pick = () => pool[Math.floor(Math.random() * pool.length)];
+  const colors: SeededVehicleColor[] = ['red', 'blue', 'green'];
+  const letters: SeededPersonLetter[] = ['A', 'B', 'C'];
+  const out: SeededMarker[] = [];
+  colors.forEach((color) => out.push({ kind: 'vehicle', color, landmarkLabel: pick() }));
+  letters.forEach((letter, i) =>
+    out.push({
+      kind: 'person',
+      letter,
+      personColor: PERSON_PALETTE[i % PERSON_PALETTE.length],
+      landmarkLabel: pick(),
+      dropoffLandmarkLabel: pick(),
+    }),
+  );
+  return out;
+}
 import {
   recordEventAction,
   upsertResponseAction,
@@ -1490,9 +1518,6 @@ function ThinkAloudExampleRunner({
       mod.copy = { ...(mod.copy ?? {}), [key]: v };
     });
   const [phase, setPhase] = useState<WarmupPhase>(initialPhase ?? 'intro');
-  // Open answer box for the demo — empty, editable (the researcher narrates
-  // filling it). Not persisted; this is a display-only worked example.
-  const [answer, setAnswer] = useState('');
 
   function advanceTo(next: WarmupPhase) {
     save.recordEvent('step_advance', { from: phase, to: next });
@@ -1564,13 +1589,16 @@ function ThinkAloudExampleRunner({
                   <span className="block text-xs uppercase tracking-[0.14em] text-[var(--muted)] mb-1">
                     {copy.answerInputLabel}
                   </span>
+                  {/* Display-only demo: non-interactive, greyed placeholder. */}
                   <input
                     type="text"
-                    value={answer}
-                    onChange={(e) => setAnswer(e.target.value)}
+                    value="STUDY"
+                    readOnly
+                    tabIndex={-1}
+                    aria-disabled
                     autoComplete="off"
                     spellCheck={false}
-                    className="w-full border border-[var(--rule)] bg-white px-3 py-2 font-mono tracking-[0.25em] text-center text-lg focus:outline-none focus:border-[var(--accent)]"
+                    className="w-full border border-[var(--rule)] bg-[var(--panel)] px-3 py-2 font-mono tracking-[0.25em] text-center text-lg text-[var(--muted)] cursor-default select-none focus:outline-none"
                   />
                 </label>
               </div>
@@ -1836,6 +1864,9 @@ function TaskRunner({
         title={t.title}
         copy={t.copy}
         onContinue={next}
+        cityMap={t.cityMap}
+        projectId={projectId}
+        recordEvent={(eventType, payload) => save.recordEvent(eventType, payload)}
       />
     );
   }
@@ -2010,6 +2041,9 @@ function TaskIntro({
   title,
   copy,
   onContinue,
+  cityMap,
+  projectId,
+  recordEvent,
 }: {
   moduleId: string;
   moduleNumber: number;
@@ -2018,31 +2052,61 @@ function TaskIntro({
   title: string;
   copy: TaskContent['copy'];
   onContinue: () => void;
+  cityMap?: CityMap;
+  projectId: string;
+  recordEvent: (eventType: string, payload: unknown) => void;
 }) {
   const annotation = isWarmup
     ? copy?.warmupAnnotation?.trim() || DEFAULT_TASK_COPY.warmupAnnotation
     : copy?.realAnnotation?.trim() || DEFAULT_TASK_COPY.realAnnotation;
-  return (
-    <Centered>
-      <div className="space-y-6">
-        <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
-          Module {moduleNumber} of {total}
-        </p>
-        <h2 className="text-3xl font-medium tracking-tight">{title}</h2>
-        <EditableCallout
-          moduleId={moduleId}
-          copyKey={isWarmup ? 'warmupAnnotation' : 'realAnnotation'}
-          value={annotation}
-          className={
-            'text-sm italic px-4 py-3 whitespace-pre-wrap ' +
-            (isWarmup
-              ? 'text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a]'
-              : 'text-[var(--muted)] bg-[var(--panel)] border border-[var(--rule)]')
-          }
-        />
-        <ContinueButton onClick={onContinue} />
-      </div>
-    </Centered>
+  // Random demo markers, fixed for this mount so they don't reshuffle on
+  // re-render. Introduces the interactive map before the task proper.
+  const demoMarkers = useMemo(
+    () => (cityMap ? randomDemoMarkers(cityMap) : []),
+    [cityMap],
+  );
+  const content = (
+    <div className="space-y-6">
+      <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
+        Module {moduleNumber} of {total}
+      </p>
+      <h2 className="text-3xl font-medium tracking-tight">{title}</h2>
+      <EditableCallout
+        moduleId={moduleId}
+        copyKey={isWarmup ? 'warmupAnnotation' : 'realAnnotation'}
+        value={annotation}
+        className={
+          'text-sm italic px-4 py-3 whitespace-pre-wrap ' +
+          (isWarmup
+            ? 'text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a]'
+            : 'text-[var(--muted)] bg-[var(--panel)] border border-[var(--rule)]')
+        }
+      />
+      {cityMap && (
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--muted)] mb-1">
+            The map (try dragging a car)
+          </p>
+          <MapCanvas
+            map={cityMap}
+            scenarioId="intro-demo"
+            storageKey={`pf:${projectId}:${moduleId}`}
+            onEvent={recordEvent}
+            seededMarkers={demoMarkers}
+          />
+        </div>
+      )}
+      <ContinueButton onClick={onContinue} />
+    </div>
+  );
+  // With a map the intro needs the full scrollable column, not the vertically
+  // centered single-screen layout.
+  return cityMap ? (
+    <div className="flex-1 flex justify-center overflow-hidden min-h-0">
+      <section className="max-w-2xl w-full overflow-y-auto pr-1">{content}</section>
+    </div>
+  ) : (
+    <Centered>{content}</Centered>
   );
 }
 
@@ -2809,7 +2873,7 @@ function ScenarioRetroStep({
             {question}
           </p>
           <p className="text-xs uppercase tracking-[0.16em] text-[var(--accent)]">
-            🔊 Answer aloud — spoken response only
+            Answer aloud — spoken response only
           </p>
           <div className="pt-2">
             <ContinueButton onClick={onContinue} label={continueLabel} />
@@ -2959,7 +3023,7 @@ function RetrospectiveRunner({
           </p>
           <p className="text-2xl leading-relaxed max-w-md">{q.text}</p>
           <p className="text-xs uppercase tracking-[0.16em] text-[var(--accent)]">
-            🔊 Answer aloud — spoken response only
+            Answer aloud — spoken response only
           </p>
           <ContinueButton
             onClick={advance}
