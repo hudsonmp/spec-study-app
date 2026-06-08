@@ -392,12 +392,39 @@ export default function MapCanvas({
     dragRef.current = { color, startedAt: new Date().toISOString() };
   }
 
+  // Revert every dragged vehicle to its seeded scenario position. Clearing
+  // `pos` drops the overrides so vehiclePos() falls back to vehicleDefault.
+  const hasMoves = Object.keys(pos).length > 0;
+  function resetMap() {
+    setPos({});
+    try {
+      window.localStorage.removeItem(posKey);
+    } catch {
+      /* ignore */
+    }
+    onEvent('map_reset', {
+      scenarioId,
+      client_ts: new Date().toISOString(),
+    });
+  }
+
   return (
     <div className="flex flex-col gap-1.5">
-      <p className="text-[11px] italic text-[var(--muted)] leading-snug">
-        Drag the cars to where you&rsquo;d assign them. Each rider shows as a
-        person (pickup) and an X (dropoff) in their colour.
-      </p>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[11px] italic text-[var(--muted)] leading-snug">
+          Drag the cars to where you&rsquo;d assign them. Each rider shows as a
+          person (pickup) and an X (dropoff) in their colour.
+        </p>
+        <button
+          type="button"
+          onClick={resetMap}
+          disabled={!hasMoves}
+          title="Move every car back to its starting position for this scenario."
+          className="shrink-0 border border-[var(--rule)] px-2 py-0.5 text-[11px] text-[var(--muted)] hover:bg-[var(--foreground)] hover:text-[var(--background)] hover:border-[var(--foreground)] transition disabled:opacity-40 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-[var(--muted)] disabled:hover:border-[var(--rule)]"
+        >
+          Reset map
+        </button>
+      </div>
       <svg
         ref={svgRef}
         xmlns="http://www.w3.org/2000/svg"

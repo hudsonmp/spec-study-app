@@ -17,6 +17,10 @@ import {
   Separator as PanelResizeHandle,
 } from 'react-resizable-panels';
 import { enumerateScreens, type Screen } from '@/lib/study/screens';
+import {
+  openPreviewChannel,
+  type PreviewMessage,
+} from '@/lib/study/preview-channel';
 import { toRoman } from '@/lib/study/roman';
 import type {
   LoadedProject,
@@ -698,6 +702,31 @@ function PreviewParticipantFlow({
     [editing, editModule],
   );
 
+  // Live sync FROM the form editor: apply pushed content for THIS project so the
+  // preview tracks edits automatically. Skip while inline-editing here so an
+  // incoming push doesn't clobber an in-progress edit in the preview itself.
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  useEffect(() => {
+    const chan = openPreviewChannel();
+    if (!chan) return;
+    const onMessage = (e: MessageEvent<PreviewMessage>) => {
+      const msg = e.data;
+      if (
+        msg?.type === 'content' &&
+        msg.projectId === project.id &&
+        !editingRef.current
+      ) {
+        setContent(msg.content);
+      }
+    };
+    chan.addEventListener('message', onMessage);
+    return () => {
+      chan.removeEventListener('message', onMessage);
+      chan.close();
+    };
+  }, [project.id]);
+
   // Drop globals — those are real /register and /onboard pages, not
   // ParticipantFlow screens. Enumerate from LIVE content so edits that change
   // labels reflect in the jump dropdown.
@@ -725,6 +754,11 @@ function PreviewParticipantFlow({
   }, [screens]);
 
   const [screenIdx, setScreenIdx] = useState(0);
+  // Live content can shrink the screen list (e.g. an example collapsing to one
+  // screen); keep the index in range so a push never strands the previewer.
+  useEffect(() => {
+    setScreenIdx((i) => Math.min(i, Math.max(0, screens.length - 1)));
+  }, [screens.length]);
   const screen = screens[screenIdx];
 
   // Live project object threaded to the runner so retro lookups + ids match
@@ -2685,7 +2719,13 @@ function TaskExampleRunner({
   controlled?: boolean;
   onAdvance?: () => void;
 }) {
-  const [step, setStep] = useState<ExStep>(initialStep ?? { kind: 'intro' });
+  // singleScreen modules collapse to the one consolidated demo screen (matching
+  // enumerateScreens, which already emits only `task_example_single` for them).
+  // Without this the uncontrolled runner walked intro → initial_spec → read →
+  // revise, contradicting the navigation/preview's single-screen view.
+  const [step, setStep] = useState<ExStep>(
+    initialStep ?? (m.singleScreen ? { kind: 'single' } : { kind: 'intro' }),
+  );
 
   function transitionTo(next: ExStep) {
     save.recordEvent('step_advance', {

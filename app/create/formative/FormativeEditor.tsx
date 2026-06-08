@@ -60,6 +60,7 @@ import {
   moveInArray,
 } from '@/lib/study/reducer';
 import { enumerateScreens, labelFor } from '@/lib/study/screens';
+import { openPreviewChannel } from '@/lib/study/preview-channel';
 import { toRoman } from '@/lib/study/roman';
 import { renderCityMapSvg } from '@/lib/study/city-map';
 import { shellProjectContent } from '@/lib/study/shell';
@@ -162,6 +163,26 @@ function ProjectEditor({
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, [content, studyName, project.id]);
+
+  // Live preview bridge: push the in-memory reducer state to any open preview
+  // tab so it tracks edits instantly — independent of the 800ms save debounce.
+  const previewChan = useRef<BroadcastChannel | null>(null);
+  useEffect(() => {
+    previewChan.current = openPreviewChannel();
+    return () => {
+      previewChan.current?.close();
+      previewChan.current = null;
+    };
+  }, []);
+  useEffect(() => {
+    const chan = previewChan.current;
+    if (!chan) return;
+    // Coalesce keystrokes so we post whole edits, not every character.
+    const t = setTimeout(() => {
+      chan.postMessage({ type: 'content', projectId: project.id, content });
+    }, 120);
+    return () => clearTimeout(t);
+  }, [content, project.id]);
 
   function changeVisibility(v: typeof visibility) {
     const fd = new FormData();
