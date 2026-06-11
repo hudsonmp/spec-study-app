@@ -116,6 +116,60 @@ export type Database = {
         }
         Relationships: []
       }
+      study_assistant_messages: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          module_id: string
+          role: string
+          scenario_idx: number | null
+          state_entities: Json
+          state_spec: string
+          study_id: string
+          user_id: string
+        }
+        Insert: {
+          content?: string
+          created_at?: string
+          id?: string
+          module_id: string
+          role: string
+          scenario_idx?: number | null
+          state_entities?: Json
+          state_spec?: string
+          study_id: string
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          module_id?: string
+          role?: string
+          scenario_idx?: number | null
+          state_entities?: Json
+          state_spec?: string
+          study_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "study_assistant_messages_study_id_fkey"
+            columns: ["study_id"]
+            isOneToOne: false
+            referencedRelation: "studies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "study_assistant_messages_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       study_events: {
         Row: {
           created_at: string
