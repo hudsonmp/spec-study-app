@@ -1280,8 +1280,8 @@ function Centered({ children }: { children: React.ReactNode }) {
 
 function ExampleBanner() {
   return (
-    <div className="border border-[#d8c98a] bg-[#fffbea] px-4 py-2 text-sm italic text-[#7c5a2e] mb-3">
-      <strong className="not-italic font-medium tracking-[0.04em]">
+    <div className="px-4 py-2 text-sm italic text-[#7c5a2e] mb-3">
+      <strong className="font-medium tracking-[0.04em]">
         {EXAMPLE_BANNER_TEXT}
       </strong>
     </div>
@@ -1625,13 +1625,13 @@ function ThinkAloudWarmupRunner({
           {phase === 'revealed' && (
             <EditableText
               as="p"
-              className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2"
+              className="text-xs italic text-[#7c5a2e] px-3 py-2"
               value={copy.postRevealCallout}
               onCommit={(v) => setCopy('postRevealCallout', v)}
             />
           )}
           {m.mandatory && phase === 'body' && (
-            <p className="text-xs italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-3 py-2">
+            <p className="text-xs italic text-[#7c5a2e] px-3 py-2">
               Please complete this warmup before continuing.
             </p>
           )}
@@ -2321,8 +2321,8 @@ function TaskIntro({
         className={
           'text-sm italic px-4 py-3 whitespace-pre-wrap ' +
           (isWarmup
-            ? 'text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a]'
-            : 'text-[var(--muted)] bg-[var(--panel)] border border-[var(--rule)]')
+            ? 'text-[#7c5a2e]'
+            : 'text-[var(--muted)]')
         }
       />
       {cityMap && (
@@ -2578,7 +2578,7 @@ function PonderStep({
             moduleId={moduleId}
             copyKey="ponderHoldNote"
             value={holdNote}
-            className="text-sm italic text-[#7c5a2e] bg-[#fffbea] border border-[#d8c98a] px-4 py-3"
+            className="text-sm italic text-[#7c5a2e] px-4 py-3"
           />
           <ContinueButton onClick={onContinue} />
         </div>
@@ -2677,7 +2677,7 @@ function ScenarioReviseStep({
               value={
                 t.copy?.reviseCallout?.trim() || DEFAULT_TASK_COPY.reviseCallout
               }
-              className="bg-[#fffbea] border border-[#d8c98a] px-3 py-2 text-sm italic text-[#7c5a2e]"
+              className="px-3 py-2 text-sm italic text-[#7c5a2e]"
             />
           }
         />
@@ -2928,7 +2928,13 @@ function TaskExampleRunner({
   controlled?: boolean;
   onAdvance?: () => void;
 }) {
-  const [step, setStep] = useState<ExStep>(initialStep ?? { kind: 'intro' });
+  // singleScreen modules collapse to the one consolidated demo screen (matching
+  // enumerateScreens, which already emits only `task_example_single` for them).
+  // Without this the uncontrolled /study runner walked intro → initial_spec →
+  // read → revise, contradicting the navigation/preview's single-screen view.
+  const [step, setStep] = useState<ExStep>(
+    initialStep ?? (m.singleScreen ? { kind: 'single' } : { kind: 'intro' }),
+  );
 
   function transitionTo(next: ExStep) {
     save.recordEvent('step_advance', {
