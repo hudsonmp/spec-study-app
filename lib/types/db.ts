@@ -14,6 +14,24 @@ export type Database = {
   }
   public: {
     Tables: {
+      llm_prompts: {
+        Row: {
+          content: string
+          key: string
+          updated_at: string
+        }
+        Insert: {
+          content: string
+          key: string
+          updated_at?: string
+        }
+        Update: {
+          content?: string
+          key?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       onboarding_fields: {
         Row: {
           created_at: string

@@ -6,6 +6,7 @@ const ITEMS: { href: string; label: string }[] = [
   { href: '/create/questionnaire', label: 'Questionnaire' },
   { href: '/create/formative', label: 'Protocol' },
   { href: '/create/script', label: 'Script' },
+  { href: '/create/pilot', label: 'Pilot' },
 ];
 
 export default function CreateNav({
@@ -18,7 +19,8 @@ export default function CreateNav({
     | 'protocol'
     | 'script'
     | 'follow'
-    | 'preview';
+    | 'preview'
+    | 'pilot';
   trailing?: React.ReactNode;
 }) {
   return (
@@ -30,7 +32,8 @@ export default function CreateNav({
           (current === 'protocol' && it.href === '/create/formative') ||
           (current === 'script' && it.href === '/create/script') ||
           (current === 'follow' && it.href === '/create/script') ||
-          (current === 'preview' && it.href === '/create/formative');
+          (current === 'preview' && it.href === '/create/formative') ||
+          (current === 'pilot' && it.href === '/create/pilot');
         return (
           <Link
             key={it.href}

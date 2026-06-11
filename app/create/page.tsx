@@ -24,6 +24,12 @@ const CARDS: Card[] = [
     blurb:
       'Write a researcher script for every participant screen; run a live follow-along.',
   },
+  {
+    href: '/create/pilot',
+    title: 'LLM pilot',
+    blurb:
+      'Pilot the help-seeking assistant on the real task scenario: edit the system prompt and context, chat, record nothing.',
+  },
 ];
 
 export default function CreateHub() {
