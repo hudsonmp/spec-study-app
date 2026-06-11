@@ -162,6 +162,61 @@ export async function recordSnapshotAction(input: {
   return { ok: true };
 }
 
+// One row of the LLM help-seeking assistant transcript, linked to the
+// participant's CURRENT state (spec + entities + scenario) at send time. Called
+// once per user turn and once per assistant reply by the /api/llm-assistant
+// route handler (server→server). Mirrors recordSnapshotAction. Append-only.
+const assistantMessageSchema = z.object({
+  moduleId: z.string().min(1),
+  scenarioIdx: z.number().int().nullable(),
+  role: z.enum(['user', 'assistant']),
+  content: z.string().max(100_000),
+  stateSpec: z.string().max(50_000),
+  stateEntities: z.string().max(200_000), // JSON-encoded Entity[]
+});
+
+export async function recordAssistantMessageAction(input: {
+  moduleId: string;
+  scenarioIdx: number | null;
+  role: 'user' | 'assistant';
+  content: string;
+  stateSpec: string;
+  stateEntities: string;
+}): Promise<{ ok: boolean }> {
+  const parsed = assistantMessageSchema.safeParse(input);
+  if (!parsed.success) return { ok: false };
+
+  const user = await getCurrentUser();
+  if (!user) return { ok: false };
+  const studyId = await getShownProjectId();
+  if (!studyId) return { ok: false };
+
+  let entitiesJson: Json = [];
+  try {
+    entitiesJson = JSON.parse(parsed.data.stateEntities) as Json;
+  } catch {
+    entitiesJson = [];
+  }
+
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase.from('study_assistant_messages').insert({
+    user_id: user.id,
+    study_id: studyId,
+    module_id: parsed.data.moduleId,
+    scenario_idx: parsed.data.scenarioIdx,
+    role: parsed.data.role,
+    content: parsed.data.content,
+    state_spec: parsed.data.stateSpec,
+    state_entities: entitiesJson,
+  });
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.error('[study] recordAssistantMessage failed:', error.message);
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
 // Sign-out: destroy the participant session and redirect home.
 export async function participantLogoutAction(): Promise<void> {
   const session = await getParticipantSession();
