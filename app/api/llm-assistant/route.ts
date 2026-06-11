@@ -2,7 +2,8 @@ import 'server-only';
 import { NextResponse, type NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
-import { HELP_SEEKING_SYSTEM_PROMPT } from '@/lib/llm/system-prompt';
+import { getHelpSeekingSystemPrompt } from '@/lib/llm/prompt-store';
+import { buildContextBlock } from '@/lib/llm/context-block';
 import { isAssistantEnabled } from '@/lib/llm/gating';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getResearcherSession } from '@/lib/auth/researcher';
@@ -58,58 +59,13 @@ const bodySchema = z.object({
   scenarioTitle: z.string().max(2_000).optional().default(''),
   scenarioClauses: z.array(clauseSchema).max(100).default([]),
   studyContext: z.string().max(20_000).optional().default(''),
+  // Pilot-only overrides (/create/pilot). Honored ONLY on researcher-
+  // authorized preview requests; a participant request carrying them is
+  // rejected outright.
+  systemPromptOverride: z.string().max(50_000).optional(),
+  contextOverride: z.string().max(100_000).optional(),
 });
 
-// Render the per-turn context block the model sees alongside the (cached)
-// system prompt. Per the spec: scenario + requirement(s) + entities/elements +
-// the scenario text + the participant's CURRENT specification text.
-function buildContextBlock(b: z.infer<typeof bodySchema>): string {
-  const reqs = b.requirements.length
-    ? b.requirements
-        .map(
-          (r, i) =>
-            `  ${i + 1}. As a ${r.role}, I want ${r.want}${
-              r.so ? `, so that ${r.so}` : ''
-            }.`,
-        )
-        .join('\n')
-    : '  (none provided)';
-
-  const scenarioClauses = b.scenarioClauses.length
-    ? b.scenarioClauses.map((c) => `  ${c.type} ${c.text}`.trim()).join('\n')
-    : '  (no scenario revealed yet)';
-
-  const entities = b.entities.length
-    ? b.entities
-        .map((e) => {
-          const els = e.elements
-            .map((el) => el.name)
-            .filter(Boolean)
-            .join(', ');
-          return `  - ${e.name || '(unnamed)'}${els ? `: ${els}` : ''}`;
-        })
-        .join('\n')
-    : '  (none recorded)';
-
-  return [
-    'CONTEXT (read-only; for your reference — the participant cannot see this block):',
-    '',
-    b.studyContext ? `System under specification:\n${b.studyContext}\n` : '',
-    'Requirements:',
-    reqs,
-    '',
-    `Current scenario${b.scenarioTitle ? ` — ${b.scenarioTitle}` : ''}:`,
-    scenarioClauses,
-    '',
-    "Participant's entities & elements so far:",
-    entities,
-    '',
-    "Participant's CURRENT specification text:",
-    b.spec.trim() ? b.spec : '  (empty)',
-  ]
-    .filter((s) => s !== '')
-    .join('\n');
-}
 
 export async function POST(request: NextRequest) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -154,6 +110,19 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Prompt/context overrides exist for the researcher pilot only. A
+  // participant request carrying them is malformed by construction.
+  if (
+    !isPreview &&
+    (body.systemPromptOverride !== undefined ||
+      body.contextOverride !== undefined)
+  ) {
+    return NextResponse.json(
+      { ok: false, error: 'overrides_require_researcher_preview' },
+      { status: 403 },
+    );
+  }
+
   // Authz: the assistant is gated to specific modules (vending warmup + real
   // task; NOT parking). Enforce server-side too, not just in the UI.
   if (!isAssistantEnabled({ moduleType: body.moduleType, moduleTitle: body.moduleTitle })) {
@@ -193,7 +162,12 @@ export async function POST(request: NextRequest) {
     role: m.role,
     content: m.content,
   }));
-  const contextBlock = buildContextBlock(body);
+  // Pilot mode may replace the auto-built context block verbatim; otherwise
+  // build it from the participant's current state as usual.
+  const contextBlock =
+    isPreview && body.contextOverride !== undefined
+      ? body.contextOverride
+      : buildContextBlock(body);
   const messages: Anthropic.MessageParam[] = [
     ...priorTurns,
     {
@@ -204,6 +178,13 @@ export async function POST(request: NextRequest) {
 
   const client = new Anthropic({ apiKey });
 
+  // Live turns use the DB-backed prompt (seeded from the IRB-approved
+  // constant); pilot turns may substitute an unsaved draft.
+  const systemPrompt =
+    isPreview && body.systemPromptOverride !== undefined
+      ? body.systemPromptOverride
+      : await getHelpSeekingSystemPrompt();
+
   let assistantText = '';
   try {
     const resp = await client.messages.create({
@@ -212,11 +193,11 @@ export async function POST(request: NextRequest) {
       // Medium reasoning for sonnet-4-6.
       output_config: { effort: 'medium' },
       thinking: { type: 'adaptive' },
-      // Long IRB-approved system prompt — cache it so repeat turns are cheap.
+      // Long system prompt — cache it so repeat turns are cheap.
       system: [
         {
           type: 'text',
-          text: HELP_SEEKING_SYSTEM_PROMPT,
+          text: systemPrompt,
           cache_control: { type: 'ephemeral' },
         },
       ],
@@ -228,7 +209,7 @@ export async function POST(request: NextRequest) {
       .join('\n')
       .trim();
   } catch (err) {
-    // eslint-disable-next-line no-console
+     
     console.error('[llm-assistant] Anthropic call failed:', (err as Error)?.message);
     return NextResponse.json(
       { ok: false, error: 'assistant_error' },
