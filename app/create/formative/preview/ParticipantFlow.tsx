@@ -18,6 +18,14 @@ import {
 } from 'react-resizable-panels';
 import { enumerateScreens, type Screen } from '@/lib/study/screens';
 import { toRoman } from '@/lib/study/roman';
+import {
+  initialTimerState,
+  grantScenario,
+  remainingMs,
+  formatRemaining,
+  WARN_THRESHOLD_MS,
+  type TimerState,
+} from '@/lib/study/timer';
 import type {
   LoadedProject,
   Module,
@@ -80,6 +88,8 @@ import {
 import { saveProjectAction } from '@/app/create/formative/actions';
 import { upsertScriptAction } from '@/app/create/script/actions';
 import MapCanvas from '@/components/MapCanvas';
+import AssistantPanel from './AssistantPanel';
+import { isAssistantEnabled } from '@/lib/llm/gating';
 
 // =============================== Save adapter ==============================
 
@@ -507,6 +517,16 @@ function SequentialParticipantFlow({
   const total = project.content.modules.length;
   const studyDoneFired = useRef(false);
 
+  // Cumulative carryover timer. Lives here (above the remounting ModuleRunner)
+  // and persists to localStorage; scenario boundaries call `grant`.
+  const timer = useCarryoverTimer(project.id);
+  const remaining = remainingMs(timer.state, timer.nowTick);
+  const showWarning =
+    timer.state.startedAt !== null &&
+    remaining <= WARN_THRESHOLD_MS &&
+    !timer.state.warnedDismissed;
+  const clock = <CarryoverClock state={timer.state} now={timer.nowTick} />;
+
   // Fire study_complete once when we reach past the last module.
   useEffect(() => {
     if (
@@ -522,7 +542,7 @@ function SequentialParticipantFlow({
 
   if (total === 0) {
     return (
-      <Shell projectName={project.name}>
+      <Shell projectName={project.name} clock={clock}>
         <Centered>
           <p className="italic text-[var(--muted)]">
             This project has no modules yet.{' '}
@@ -538,7 +558,7 @@ function SequentialParticipantFlow({
 
   if (moduleIdx >= total) {
     return (
-      <Shell projectName={project.name}>
+      <Shell projectName={project.name} clock={clock}>
         <Centered>
           <h2 className="text-2xl font-medium mb-3">Thank you</h2>
           <p>
@@ -559,7 +579,9 @@ function SequentialParticipantFlow({
       moduleNumber={moduleIdx + 1}
       total={total}
       showSignOut={participantId !== null}
+      clock={clock}
     >
+      {showWarning && <TimeWarningPopup onDismiss={timer.dismissWarning} />}
       <ModuleRunner
         key={m.id}
         project={project}
@@ -567,6 +589,7 @@ function SequentialParticipantFlow({
         module={m}
         moduleNumber={moduleIdx + 1}
         total={total}
+        onScenarioEnter={timer.grant}
         onComplete={() => setModuleIdx((i) => i + 1)}
       />
     </Shell>
@@ -1009,6 +1032,7 @@ function Shell({
   previewControls,
   rail,
   fill = false,
+  clock,
   children,
 }: {
   projectName: string;
@@ -1023,6 +1047,9 @@ function Shell({
   // `fill` (preview) makes the shell fill its parent (which sits below the
   // PreviewBrowser top bar). Live /study leaves it false → min-h-screen.
   fill?: boolean;
+  // Header clock. Live /study passes the carryover timer; preview/empty states
+  // fall back to the UTC clock.
+  clock?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -1034,7 +1061,7 @@ function Shell({
     >
       <header className="shrink-0 border-b border-[var(--rule)] bg-[var(--panel)] px-6 py-3 flex justify-between items-center gap-4 flex-wrap">
         <div className="flex items-baseline gap-3 min-w-0">
-          <UtcClock />
+          {clock ?? <UtcClock />}
           <h1 className="text-lg font-medium tracking-tight truncate">
             {projectName}
           </h1>
@@ -1096,6 +1123,150 @@ function UtcClock() {
     >
       {now}
     </span>
+  );
+}
+
+// ============================ Carryover timer ============================
+// Lives in SequentialParticipantFlow (ABOVE the per-module ModuleRunner, which
+// remounts via key={m.id}). Persisted to `pf:${projectId}:timer` so the granted
+// budgets + start time survive those remounts. Returns the state, a tick value
+// (so consumers re-render every second), and a `grant(key)` to advance the
+// per-scenario budget on scenario boundaries.
+function useCarryoverTimer(projectId: string) {
+  const storageKey = `pf:${projectId}:timer`;
+  const [state, setState] = useState<TimerState>(initialTimerState);
+  const [hydrated, setHydrated] = useState(false);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+
+  // Hydrate once from localStorage.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<TimerState>;
+        setState({
+          startedAt:
+            typeof parsed.startedAt === 'number' ? parsed.startedAt : null,
+          scenariosEntered:
+            typeof parsed.scenariosEntered === 'number'
+              ? parsed.scenariosEntered
+              : 0,
+          countedKeys: Array.isArray(parsed.countedKeys)
+            ? parsed.countedKeys.filter((k): k is string => typeof k === 'string')
+            : [],
+          warnedDismissed: !!parsed.warnedDismissed,
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+    setHydrated(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]);
+
+  // Persist after hydration.
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(state));
+    } catch {
+      /* ignore */
+    }
+  }, [storageKey, state, hydrated]);
+
+  // 1Hz tick while the clock is running (or before it starts — cheap).
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const grant = useCallback((key: string) => {
+    setState((prev) => grantScenario(prev, key));
+  }, []);
+
+  const dismissWarning = useCallback(() => {
+    setState((prev) =>
+      prev.warnedDismissed ? prev : { ...prev, warnedDismissed: true },
+    );
+  }, []);
+
+  return { state, nowTick, grant, dismissWarning, hydrated };
+}
+
+// Header display of the carryover timer: mm:ss remaining, RED + leading "-"
+// once over the suggested budget. The clock keeps counting past zero.
+function CarryoverClock({
+  state,
+  now,
+}: {
+  state: TimerState;
+  now: number;
+}) {
+  if (state.startedAt === null) {
+    // Before the first scenario, show the budget at rest (no countdown yet).
+    return (
+      <span
+        className="font-mono text-xs text-[var(--muted)] tabular-nums"
+        aria-label="Time remaining"
+        title="Suggested time remaining"
+      >
+        15:00
+      </span>
+    );
+  }
+  const rem = remainingMs(state, now);
+  const over = rem < 0;
+  const warn = rem <= WARN_THRESHOLD_MS;
+  return (
+    <span
+      className={
+        'font-mono text-xs tabular-nums ' +
+        (warn ? 'text-[var(--danger)] font-semibold' : 'text-[var(--muted)]')
+      }
+      aria-label="Time remaining"
+      title="Suggested time remaining (you may go over)"
+    >
+      {over ? '-' : ''}
+      {formatRemaining(rem)}
+    </span>
+  );
+}
+
+// Dismissable 2-minute warning. Tells the participant they're near their
+// suggested time, that they may go over but should try to stay close.
+function TimeWarningPopup({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div className="fixed inset-x-0 top-16 z-50 flex justify-center px-4">
+      <div className="max-w-md w-full border border-[var(--danger)] bg-[#fff5f5] shadow-xl px-5 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="text-sm font-semibold text-[var(--danger)]">
+            You&rsquo;re nearing your suggested time
+          </h3>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="text-[var(--muted)] hover:text-[var(--foreground)] text-lg leading-none"
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+        <p className="mt-2 text-sm text-[var(--foreground)] leading-relaxed">
+          You have about two minutes left of your suggested time. You may go over
+          if you need to — please just try to stay close. You can keep working at
+          your own pace.
+        </p>
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="border border-[var(--rule)] bg-[var(--foreground)] px-3 py-1.5 text-sm text-[var(--background)] hover:opacity-90"
+          >
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1179,6 +1350,7 @@ function ModuleRunner({
   moduleNumber,
   total,
   onComplete,
+  onScenarioEnter,
   controlled = false,
   onAdvance,
   initialScreen,
@@ -1189,6 +1361,9 @@ function ModuleRunner({
   moduleNumber: number;
   total: number;
   onComplete: () => void;
+  // Carryover-timer hook: fired with a unique key each time the participant
+  // enters a scenario in a real task module, to grant that scenario's budget.
+  onScenarioEnter?: (key: string) => void;
   // Controlled (preview) mode: each Continue calls onAdvance instead of
   // mutating internal step state; the parent re-mounts with the next screen.
   controlled?: boolean;
@@ -1265,6 +1440,7 @@ function ModuleRunner({
         isWarmup={m.type === 'task_warmup'}
         save={save}
         onComplete={complete}
+        onScenarioEnter={onScenarioEnter}
         initialStep={initialScreen ? screenToTaskStep(initialScreen) : undefined}
         controlled={controlled}
         onAdvance={onAdvance}
@@ -1656,6 +1832,7 @@ function TaskRunner({
   isWarmup,
   save,
   onComplete,
+  onScenarioEnter,
   initialStep,
   controlled = false,
   onAdvance,
@@ -1668,6 +1845,8 @@ function TaskRunner({
   isWarmup: boolean;
   save: SaveAdapter;
   onComplete: () => void;
+  // Carryover-timer grant: fired once per scenario entered in a REAL task.
+  onScenarioEnter?: (key: string) => void;
   // Preview-mode hooks: see ThinkAloudWarmupRunner for semantics.
   initialStep?: TaskStep;
   controlled?: boolean;
@@ -1678,6 +1857,22 @@ function TaskRunner({
   const retro = m.type === 'task' ? t.perScenarioRetrospective ?? [] : [];
 
   const [step, setStep] = useState<TaskStep>(initialStep ?? { kind: 'intro' });
+
+  // Carryover timer: grant a 15-minute budget the first time the participant
+  // enters each scenario in the REAL task (type 'task'). Warmup scenarios are
+  // practice and don't consume the participant's task budget. `grant` is
+  // idempotent per key, so back-navigation / re-mounts don't double-count.
+  // Fires on the scenario_read entry beat.
+  const grantedScenarioRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    if (m.type !== 'task') return;
+    if (!onScenarioEnter) return;
+    if (step.kind !== 'scenario_read') return;
+    if (grantedScenarioRef.current.has(step.idx)) return;
+    grantedScenarioRef.current.add(step.idx);
+    onScenarioEnter(`${m.id}:${step.idx}`);
+  }, [m.type, m.id, step, onScenarioEnter]);
+
   const [spec, setSpec] = useLocalString(`pf:${projectId}:${m.id}:spec`);
   const [entities, setEntities] = useLocalEntities(
     `pf:${projectId}:${m.id}:entities`,
@@ -1854,6 +2049,45 @@ function TaskRunner({
     }
   }
 
+  // LLM help-seeking assistant. Only on a LIVE session (participantId set, so
+  // never in the editor preview) and only on assisted modules (vending warmup
+  // + the real task; never parking — enforced by isAssistantEnabled on the
+  // module title/type). The panel overlays the spec area on the spec-bearing
+  // steps. `scenarioForAssistant` is the scenario in scope on scenario steps.
+  const assistantOn =
+    participantId !== null &&
+    isAssistantEnabled({ moduleType: m.type, moduleTitle: t.title });
+  const scenarioForAssistant =
+    step.kind === 'scenario_read' ||
+    step.kind === 'scenario_revise' ||
+    step.kind === 'scenario_ponder' ||
+    step.kind === 'scenario_retro'
+      ? t.scenarios[step.idx] ?? null
+      : null;
+  const scenarioIdxForAssistant =
+    step.kind === 'scenario_read' ||
+    step.kind === 'scenario_revise' ||
+    step.kind === 'scenario_ponder' ||
+    step.kind === 'scenario_retro'
+      ? step.idx
+      : null;
+  const renderAssistant = () =>
+    assistantOn ? (
+      <AssistantPanel
+        ctx={{
+          moduleId: m.id,
+          moduleType: m.type,
+          moduleTitle: t.title,
+          scenarioIdx: scenarioIdxForAssistant,
+          spec,
+          entities,
+          requirements: t.requirements,
+          scenario: scenarioForAssistant,
+          studyContext: t.studyContext,
+        }}
+      />
+    ) : null;
+
   if (step.kind === 'intro') {
     return (
       <TaskIntro
@@ -1877,16 +2111,19 @@ function TaskRunner({
 
   if (step.kind === 'initial_spec') {
     return (
-      <InitialSpecStep
-        t={t}
-        spec={spec}
-        setSpec={setSpec}
-        entities={entities}
-        setEntities={setEntities}
-        specSavedAt={specSavedAt}
-        entitiesSavedAt={entitiesSavedAt}
-        onContinue={next}
-      />
+      <>
+        <InitialSpecStep
+          t={t}
+          spec={spec}
+          setSpec={setSpec}
+          entities={entities}
+          setEntities={setEntities}
+          specSavedAt={specSavedAt}
+          entitiesSavedAt={entitiesSavedAt}
+          onContinue={next}
+        />
+        {renderAssistant()}
+      </>
     );
   }
 
@@ -1902,22 +2139,25 @@ function TaskRunner({
 
   if (step.kind === 'scenario_read') {
     return (
-      <ScenarioReadStep
-        t={t}
-        scenario={scenario}
-        scenarioIdx={step.idx}
-        totalScenarios={t.scenarios.length}
-        spec={spec}
-        setSpec={setSpec}
-        entities={entities}
-        setEntities={setEntities}
-        specSavedAt={specSavedAt}
-        entitiesSavedAt={entitiesSavedAt}
-        projectId={projectId}
-        moduleId={m.id}
-        save={save}
-        onContinue={next}
-      />
+      <>
+        <ScenarioReadStep
+          t={t}
+          scenario={scenario}
+          scenarioIdx={step.idx}
+          totalScenarios={t.scenarios.length}
+          spec={spec}
+          setSpec={setSpec}
+          entities={entities}
+          setEntities={setEntities}
+          specSavedAt={specSavedAt}
+          entitiesSavedAt={entitiesSavedAt}
+          projectId={projectId}
+          moduleId={m.id}
+          save={save}
+          onContinue={next}
+        />
+        {renderAssistant()}
+      </>
     );
   }
 
@@ -1935,25 +2175,28 @@ function TaskRunner({
 
   if (step.kind === 'scenario_revise') {
     return (
-      <ScenarioReviseStep
-        t={t}
-        scenario={scenario}
-        scenarioIdx={step.idx}
-        totalScenarios={t.scenarios.length}
-        spec={spec}
-        setSpec={setSpec}
-        entities={entities}
-        setEntities={setEntities}
-        specSavedAt={specSavedAt}
-        entitiesSavedAt={entitiesSavedAt}
-        isLast={
-          step.idx === t.scenarios.length - 1 && retro.length === 0
-        }
-        projectId={projectId}
-        moduleId={m.id}
-        save={save}
-        onContinue={next}
-      />
+      <>
+        <ScenarioReviseStep
+          t={t}
+          scenario={scenario}
+          scenarioIdx={step.idx}
+          totalScenarios={t.scenarios.length}
+          spec={spec}
+          setSpec={setSpec}
+          entities={entities}
+          setEntities={setEntities}
+          specSavedAt={specSavedAt}
+          entitiesSavedAt={entitiesSavedAt}
+          isLast={
+            step.idx === t.scenarios.length - 1 && retro.length === 0
+          }
+          projectId={projectId}
+          moduleId={m.id}
+          save={save}
+          onContinue={next}
+        />
+        {renderAssistant()}
+      </>
     );
   }
 
@@ -3067,6 +3310,55 @@ function RetrospectiveRunner({
 // top, an ASCII divider, then the free-form spec textarea. The pad has a
 // single bg-white container so the visual reads as one continuous
 // "specification surface". readOnly turns every input non-interactive.
+// Google-Docs-style bullet continuation for the spec textarea. On Enter:
+//  • if the current line begins with "- " and has content after it, start the
+//    next line with "- " too;
+//  • if the current line is an empty bullet ("- " with nothing after), clear
+//    the bullet (drop the "- ") instead of carrying it forward.
+// Pure DOM text handling — no state-model change beyond the textarea value.
+// Shift+Enter is left to the browser (plain newline) so it's an escape hatch.
+function handleBulletKeyDown(
+  e: React.KeyboardEvent<HTMLTextAreaElement>,
+  spec: string,
+  setSpec: (v: string) => void,
+): void {
+  if (e.key !== 'Enter' || e.shiftKey) return;
+  const ta = e.currentTarget;
+  const { selectionStart, selectionEnd } = ta;
+  if (selectionStart === null || selectionEnd === null) return;
+  // Only act on a collapsed caret (no active selection).
+  if (selectionStart !== selectionEnd) return;
+
+  const before = spec.slice(0, selectionStart);
+  const lineStart = before.lastIndexOf('\n') + 1;
+  const currentLine = spec.slice(lineStart, selectionStart);
+
+  const BULLET = '- ';
+  if (!currentLine.startsWith(BULLET)) return;
+
+  e.preventDefault();
+  const after = spec.slice(selectionEnd);
+
+  // Empty bullet → remove it (end the list).
+  if (currentLine.trim() === '-' || currentLine === BULLET) {
+    const next = spec.slice(0, lineStart) + after;
+    setSpec(next);
+    requestAnimationFrame(() => {
+      ta.selectionStart = ta.selectionEnd = lineStart;
+    });
+    return;
+  }
+
+  // Non-empty bullet → continue with a fresh bullet on the next line.
+  const insertion = '\n' + BULLET;
+  const next = before + insertion + after;
+  setSpec(next);
+  const caret = selectionStart + insertion.length;
+  requestAnimationFrame(() => {
+    ta.selectionStart = ta.selectionEnd = caret;
+  });
+}
+
 function SpecColumn({
   spec,
   setSpec,
@@ -3128,9 +3420,18 @@ function SpecColumn({
             {caption}
           </p>
         )}
+        {!readOnly && (
+          <p className="text-[11px] text-[var(--muted)] leading-relaxed border-l-2 border-[var(--rule)] pl-2">
+            Allowed: you may write in whatever form feels natural, including
+            prose, pseudocode, or bulleted points. Start a line with{' '}
+            <span className="font-mono">{'- '}</span> to make a bullet; pressing
+            Enter continues the list, and an empty bullet ends it.
+          </p>
+        )}
         <textarea
           value={spec}
           onChange={(e) => !readOnly && setSpec(e.target.value)}
+          onKeyDown={(e) => !readOnly && handleBulletKeyDown(e, spec, setSpec)}
           readOnly={readOnly}
           className={
             'border-0 p-0 text-[15px] leading-relaxed resize-y focus:outline-none font-mono min-h-[14rem] w-full bg-transparent ' +
