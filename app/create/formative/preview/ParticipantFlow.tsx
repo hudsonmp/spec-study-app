@@ -2928,7 +2928,13 @@ function TaskExampleRunner({
   controlled?: boolean;
   onAdvance?: () => void;
 }) {
-  const [step, setStep] = useState<ExStep>(initialStep ?? { kind: 'intro' });
+  // singleScreen modules collapse to the one consolidated demo screen (matching
+  // enumerateScreens, which already emits only `task_example_single` for them).
+  // Without this the uncontrolled /study runner walked intro → initial_spec →
+  // read → revise, contradicting the navigation/preview's single-screen view.
+  const [step, setStep] = useState<ExStep>(
+    initialStep ?? (m.singleScreen ? { kind: 'single' } : { kind: 'intro' }),
+  );
 
   function transitionTo(next: ExStep) {
     save.recordEvent('step_advance', {
