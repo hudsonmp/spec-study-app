@@ -750,6 +750,30 @@ function PreviewParticipantFlow({
   const [screenIdx, setScreenIdx] = useState(0);
   const screen = screens[screenIdx];
 
+  // Same cumulative carryover timer the participant sees on /study, stored
+  // under a preview-scoped key so it never collides with a live run in the
+  // same browser. Resettable from the header (re-previews are common).
+  const timer = useCarryoverTimer(`preview:${project.id}`);
+  const remaining = remainingMs(timer.state, timer.nowTick);
+  const showWarning =
+    timer.state.startedAt !== null &&
+    remaining <= WARN_THRESHOLD_MS &&
+    !timer.state.warnedDismissed;
+  const clock = (
+    <span className="flex items-center gap-1.5">
+      <CarryoverClock state={timer.state} now={timer.nowTick} />
+      <button
+        type="button"
+        onClick={timer.reset}
+        className="text-[10px] text-[var(--muted)] hover:text-[var(--foreground)]"
+        title="Reset the preview timer"
+        aria-label="Reset the preview timer"
+      >
+        ↺
+      </button>
+    </span>
+  );
+
   // Live project object threaded to the runner so retro lookups + ids match
   // the edited content.
   const liveProject = useMemo<LoadedProject>(
@@ -802,6 +826,7 @@ function PreviewParticipantFlow({
         moduleNumber={moduleIdx + 1}
         total={content.modules.length}
         fill
+        clock={clock}
         previewControls={
           <>
             <EditToggle
@@ -831,6 +856,7 @@ function PreviewParticipantFlow({
           ) : undefined
         }
       >
+        {showWarning && <TimeWarningPopup onDismiss={timer.dismissWarning} />}
         {/* key includes `editing` so toggling edit mode remounts the runner
             (swaps plain text <-> contentEditable cleanly). Spec/entity
             localStorage survives because its keys are (projectId, moduleId). */}
@@ -842,6 +868,7 @@ function PreviewParticipantFlow({
           moduleNumber={moduleIdx + 1}
           total={content.modules.length}
           onComplete={advance}
+          onScenarioEnter={timer.grant}
           controlled
           onAdvance={advance}
           initialScreen={screen}
@@ -1190,7 +1217,13 @@ function useCarryoverTimer(projectId: string) {
     );
   }, []);
 
-  return { state, nowTick, grant, dismissWarning, hydrated };
+  // Back to a fresh, unstarted clock (preview-only affordance — the live
+  // /study flow never resets a participant's running budget).
+  const reset = useCallback(() => {
+    setState(initialTimerState());
+  }, []);
+
+  return { state, nowTick, grant, dismissWarning, reset, hydrated };
 }
 
 // Header display of the carryover timer: mm:ss remaining, RED + leading "-"
@@ -2049,13 +2082,15 @@ function TaskRunner({
     }
   }
 
-  // LLM help-seeking assistant. Only on a LIVE session (participantId set, so
-  // never in the editor preview) and only on assisted modules (vending warmup
-  // + the real task; never parking — enforced by isAssistantEnabled on the
-  // module title/type). The panel overlays the spec area on the spec-bearing
-  // steps. `scenarioForAssistant` is the scenario in scope on scenario steps.
+  // LLM help-seeking assistant. On a LIVE session (participantId set) or in
+  // the researcher preview (controlled, full fidelity — same gating, but the
+  // route authorizes via the researcher session and persists nothing). Only on
+  // assisted modules (vending warmup + the real task; never parking — enforced
+  // by isAssistantEnabled on the module title/type). The panel overlays the
+  // spec area on the spec-bearing steps. `scenarioForAssistant` is the
+  // scenario in scope on scenario steps.
   const assistantOn =
-    participantId !== null &&
+    (participantId !== null || controlled) &&
     isAssistantEnabled({ moduleType: m.type, moduleTitle: t.title });
   const scenarioForAssistant =
     step.kind === 'scenario_read' ||
@@ -2074,6 +2109,7 @@ function TaskRunner({
   const renderAssistant = () =>
     assistantOn ? (
       <AssistantPanel
+        preview={participantId === null}
         ctx={{
           moduleId: m.id,
           moduleType: m.type,

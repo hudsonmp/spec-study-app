@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { HELP_SEEKING_SYSTEM_PROMPT } from '@/lib/llm/system-prompt';
 import { isAssistantEnabled } from '@/lib/llm/gating';
 import { getCurrentUser } from '@/lib/auth/current-user';
+import { getResearcherSession } from '@/lib/auth/researcher';
 import { recordAssistantMessageAction } from '@/app/study/actions';
 
 // Route Handlers are uncached by default (Next 16). This one is request-time:
@@ -41,6 +42,9 @@ const clauseSchema = z.object({
 });
 
 const bodySchema = z.object({
+  // Researcher preview: authorized via the researcher session (not a
+  // participant), and NOTHING is written to study_assistant_messages.
+  preview: z.boolean().optional().default(false),
   moduleId: z.string().min(1),
   moduleType: z.string().min(1),
   moduleTitle: z.string().optional().default(''),
@@ -116,15 +120,6 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Authn: only an authenticated participant may use the assistant.
-  const user = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json(
-      { ok: false, error: 'unauthorized' },
-      { status: 401 },
-    );
-  }
-
   let body: z.infer<typeof bodySchema>;
   try {
     body = bodySchema.parse(await request.json());
@@ -133,6 +128,30 @@ export async function POST(request: NextRequest) {
       { ok: false, error: 'bad_request' },
       { status: 400 },
     );
+  }
+
+  // Authn: either an authenticated participant (live /study) or, when the
+  // preview flag is set, an authenticated researcher (editor preview). A
+  // preview request never reads or writes participant state — even if a
+  // participant cookie also exists in the same browser.
+  let isPreview = false;
+  if (body.preview) {
+    const researcher = await getResearcherSession();
+    if (!researcher.ok) {
+      return NextResponse.json(
+        { ok: false, error: 'unauthorized' },
+        { status: 401 },
+      );
+    }
+    isPreview = true;
+  } else {
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json(
+        { ok: false, error: 'unauthorized' },
+        { status: 401 },
+      );
+    }
   }
 
   // Authz: the assistant is gated to specific modules (vending warmup + real
@@ -155,15 +174,18 @@ export async function POST(request: NextRequest) {
   const entitiesJson = JSON.stringify(body.entities);
 
   // Persist the participant's turn FIRST (linked to their state at send time),
-  // so the transcript is complete even if the model call fails.
-  await recordAssistantMessageAction({
-    moduleId: body.moduleId,
-    scenarioIdx: body.scenarioIdx,
-    role: 'user',
-    content: lastTurn.content,
-    stateSpec: body.spec,
-    stateEntities: entitiesJson,
-  });
+  // so the transcript is complete even if the model call fails. Preview turns
+  // are never persisted.
+  if (!isPreview) {
+    await recordAssistantMessageAction({
+      moduleId: body.moduleId,
+      scenarioIdx: body.scenarioIdx,
+      role: 'user',
+      content: lastTurn.content,
+      stateSpec: body.spec,
+      stateEntities: entitiesJson,
+    });
+  }
 
   // Assemble the messages: prior turns verbatim, then the final user turn with
   // the current-state context prepended (so the model always sees fresh state).
@@ -219,15 +241,17 @@ export async function POST(request: NextRequest) {
       "I'm sorry — I couldn't produce a reply just now. Try asking a targeted question about the task.";
   }
 
-  // Persist the assistant reply, linked to the same state.
-  await recordAssistantMessageAction({
-    moduleId: body.moduleId,
-    scenarioIdx: body.scenarioIdx,
-    role: 'assistant',
-    content: assistantText,
-    stateSpec: body.spec,
-    stateEntities: entitiesJson,
-  });
+  // Persist the assistant reply, linked to the same state (never in preview).
+  if (!isPreview) {
+    await recordAssistantMessageAction({
+      moduleId: body.moduleId,
+      scenarioIdx: body.scenarioIdx,
+      role: 'assistant',
+      content: assistantText,
+      stateSpec: body.spec,
+      stateEntities: entitiesJson,
+    });
+  }
 
   return NextResponse.json({ ok: true, reply: assistantText });
 }

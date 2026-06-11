@@ -32,7 +32,15 @@ export type AssistantContext = {
 const PANEL_W = 380;
 const PANEL_H = 460;
 
-export default function AssistantPanel({ ctx }: { ctx: AssistantContext }) {
+export default function AssistantPanel({
+  ctx,
+  preview = false,
+}: {
+  ctx: AssistantContext;
+  // Researcher preview: the route authorizes via the researcher session and
+  // skips the per-participant transcript writes.
+  preview?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState('');
@@ -110,6 +118,7 @@ export default function AssistantPanel({ ctx }: { ctx: AssistantContext }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          preview,
           moduleId: ctx.moduleId,
           moduleType: ctx.moduleType,
           moduleTitle: ctx.moduleTitle,
