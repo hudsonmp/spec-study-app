@@ -1,3 +1,8 @@
+# Specification Design App
+This is an interview tool that allows a participant to interact with an intervention that will be included in a future scientific publication. Everything is routed through Next.js and I use Supabase for the database. This has been IRB approved.
+
+
+# Information Aout the Next.js Site
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
