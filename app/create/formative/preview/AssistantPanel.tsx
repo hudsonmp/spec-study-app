@@ -35,13 +35,30 @@ const PANEL_H = 460;
 export default function AssistantPanel({
   ctx,
   preview = false,
+  open: openProp,
+  onOpenChange,
 }: {
   ctx: AssistantContext;
   // Researcher preview: the route authorizes via the researcher session and
   // skips the per-participant transcript writes.
   preview?: boolean;
+  // Controlled open state (optional). When `open`/`onOpenChange` are supplied
+  // the panel is driven by the parent — used so a researcher `offer_help` push
+  // can open the assistant from outside this component. When omitted the panel
+  // falls back to its own internal state (the original uncontrolled behavior).
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [openInternal, setOpenInternal] = useState(false);
+  const isControlled = openProp !== undefined;
+  const open = isControlled ? openProp : openInternal;
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (!isControlled) setOpenInternal(next);
+      onOpenChange?.(next);
+    },
+    [isControlled, onOpenChange],
+  );
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);

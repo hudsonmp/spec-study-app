@@ -30,6 +30,12 @@ import {
   WARN_THRESHOLD_MS,
   type TimerState,
 } from '@/lib/study/timer';
+import {
+  participantChannel,
+  pushActionFor,
+  type PushAction,
+} from '@/lib/study/push';
+import { getBrowserClient } from '@/lib/supabase/browser';
 import type {
   LoadedProject,
   Module,
@@ -532,12 +538,17 @@ function EditableCallout({
 export default function ParticipantFlow({
   project,
   participantId = null,
+  pid = null,
   previewMode = false,
   scripts,
   referenceScript = '',
 }: {
   project: LoadedProject;
   participantId?: string | null;
+  // The participant's 3-digit `pid` (NOT the user UUID). The realtime broadcast
+  // channel keys on this; threaded client-side so SequentialParticipantFlow can
+  // join `live:participant:<pid>`. Null in preview / when there's no session.
+  pid?: string | null;
   // Preview mode: full-fidelity participant rendering driven by an external
   // screen index. Wrapper exposes Prev/Next/Jump controls and the runners
   // remount on screen change instead of advancing internal state. NEVER
@@ -558,16 +569,22 @@ export default function ParticipantFlow({
     );
   }
   return (
-    <SequentialParticipantFlow project={project} participantId={participantId} />
+    <SequentialParticipantFlow
+      project={project}
+      participantId={participantId}
+      pid={pid}
+    />
   );
 }
 
 function SequentialParticipantFlow({
   project,
   participantId,
+  pid,
 }: {
   project: LoadedProject;
   participantId: string | null;
+  pid: string | null;
 }) {
   const total = project.content.modules.length;
   // Resume the module the participant was on across an accidental reload (their
@@ -589,7 +606,35 @@ function SequentialParticipantFlow({
     hasStarted(timer.state) &&
     taskRemainingMs <= WARN_THRESHOLD_MS &&
     !timer.state.warnedDismissed;
+  // At-0 advisory (S2): fires once the CURRENT task is at/over its budget.
+  // DISTINCT from the 2-minute warning — its own gate (`zeroDismissed`) so the
+  // two dismiss independently and neither re-pops every tick.
+  const showAtZero =
+    hasStarted(timer.state) &&
+    taskRemainingMs <= 0 &&
+    !timer.state.zeroDismissed;
   const clock = <CarryoverClock state={timer.state} now={timer.nowTick} />;
+
+  // Bridge so an `offer_help` push (handled here) can open the assistant living
+  // deep in TaskRunner. A bumping token (not a boolean) re-opens on every push.
+  const [assistantOpenToken, setAssistantOpenToken] = useState(0);
+  const assistantSignal = useMemo<AssistantOpenSignal>(
+    () => ({
+      openToken: assistantOpenToken,
+      requestOpen: () => setAssistantOpenToken((n) => n + 1),
+    }),
+    [assistantOpenToken],
+  );
+
+  // Researcher → participant realtime pushes (S3). Joins the PUBLIC broadcast
+  // channel `live:participant:<pid>` and surfaces the two pushed popups; each
+  // received push is logged as a study_event. Returns the popup state.
+  const pushes = useResearcherPushes({
+    pid,
+    participantId,
+    cumulativeRemainingMsNow: () =>
+      timerFromState(timer.state, Date.now()).cumulativeRemainingMs,
+  });
 
   // Fire study_complete once when we reach past the last module.
   useEffect(() => {
@@ -657,19 +702,114 @@ function SequentialParticipantFlow({
       showSignOut={participantId !== null}
       clock={clock}
     >
+      {/* Fixed, high-z popup siblings. The auto 2-minute warning and the at-0
+          advisory are independent (separate gates, separate vertical offsets);
+          the two researcher pushes overlay above them. */}
       {showWarning && <TimeWarningPopup onDismiss={timer.dismissWarning} />}
-      <ModuleRunner
-        key={m.id}
-        project={project}
-        participantId={participantId}
-        module={m}
-        moduleNumber={moduleIdx + 1}
-        total={total}
-        onPhaseEnter={timer.grant}
-        onComplete={() => setModuleIdx((i) => i + 1)}
-      />
+      {showAtZero && <AtZeroPopup onDismiss={timer.dismissZero} />}
+      {pushes.showTime && (
+        <ShowTimePopup
+          cumulativeRemainingMs={pushes.showTimeCumulativeMs}
+          onDismiss={pushes.dismissShowTime}
+        />
+      )}
+      {pushes.offerHelp && (
+        <OfferHelpPopup
+          onOpenAssistant={assistantSignal.requestOpen}
+          onDismiss={pushes.dismissOfferHelp}
+        />
+      )}
+      <AssistantOpenContext.Provider value={assistantSignal}>
+        <ModuleRunner
+          key={m.id}
+          project={project}
+          participantId={participantId}
+          module={m}
+          moduleNumber={moduleIdx + 1}
+          total={total}
+          onPhaseEnter={timer.grant}
+          onComplete={() => setModuleIdx((i) => i + 1)}
+        />
+      </AssistantOpenContext.Provider>
     </Shell>
   );
+}
+
+// Researcher → participant realtime pushes (S3). Subscribes to the PUBLIC
+// Supabase broadcast channel `live:participant:<pid>` for the two cross-repo
+// events (`show_time`, `offer_help`), drives the two pushed popups, and logs
+// each receipt as a `study_event` (`researcher_push`, payload `{ kind }`).
+// No-op when there's no pid (preview / no session) — the channel never opens.
+function useResearcherPushes({
+  pid,
+  participantId,
+  cumulativeRemainingMsNow,
+}: {
+  pid: string | null;
+  participantId: string | null;
+  // Pulled lazily at receive time so the number is the participant's OWN
+  // cumulative remaining computed at Date.now() (the broadcast carries none).
+  cumulativeRemainingMsNow: () => number;
+}) {
+  const [showTime, setShowTime] = useState(false);
+  const [showTimeCumulativeMs, setShowTimeCumulativeMs] = useState(0);
+  const [offerHelp, setOfferHelp] = useState(false);
+
+  // Keep the latest callbacks in refs so the subscription effect can depend only
+  // on `pid` (re-subscribing on every render-new closure would thrash the
+  // socket).
+  const cumulativeRef = useRef(cumulativeRemainingMsNow);
+  cumulativeRef.current = cumulativeRemainingMsNow;
+  const participantIdRef = useRef(participantId);
+  participantIdRef.current = participantId;
+
+  useEffect(() => {
+    if (!pid) return;
+    const supabase = getBrowserClient();
+    const channelName = participantChannel(pid);
+    // PUBLIC broadcast (config.private left false — see design's authz gate):
+    // works for the anon participant client without a realtime.messages RLS
+    // policy. Listening on `broadcast` with an explicit event filter would force
+    // one handler per event; instead take all broadcasts and route by name.
+    const channel = supabase.channel(channelName);
+
+    const handle = (action: PushAction) => {
+      // Log the receipt regardless of which popup it drives (research data on
+      // scaffolding). Only on a live session — preview never persists.
+      if (participantIdRef.current !== null) {
+        void recordEventAction({
+          moduleId: '_study',
+          eventType: 'researcher_push',
+          payload: { kind: action },
+        }).catch(() => {});
+      }
+      if (action === 'show_time') {
+        setShowTimeCumulativeMs(cumulativeRef.current());
+        setShowTime(true);
+      } else if (action === 'offer_help') {
+        setOfferHelp(true);
+      }
+    };
+
+    channel
+      .on('broadcast', { event: '*' }, (msg: { event?: string }) => {
+        const action = pushActionFor(msg.event ?? '');
+        if (action) handle(action);
+      })
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [pid]);
+
+  return {
+    showTime,
+    showTimeCumulativeMs,
+    offerHelp,
+    dismissShowTime: () => setShowTime(false),
+    dismissOfferHelp: () => setOfferHelp(false),
+  };
 }
 
 // ========================== Preview-mode wrapper ==========================
@@ -1270,6 +1410,7 @@ function useCarryoverTimer(projectId: string) {
           scenarioCount:
             typeof parsed.scenarioCount === 'number' ? parsed.scenarioCount : 0,
           warnedDismissed: !!parsed.warnedDismissed,
+          zeroDismissed: !!parsed.zeroDismissed,
         });
       }
     } catch {
@@ -1321,13 +1462,22 @@ function useCarryoverTimer(projectId: string) {
     );
   }, []);
 
+  // Dismiss the at-0 advisory popup (S2). DISTINCT from dismissWarning: gated by
+  // its own `zeroDismissed` flag so the at-0 popup shows once per task and the
+  // 2-minute warning's dismissal state is independent.
+  const dismissZero = useCallback(() => {
+    setState((prev) =>
+      prev.zeroDismissed ? prev : { ...prev, zeroDismissed: true },
+    );
+  }, []);
+
   // Back to a fresh, unstarted clock (preview-only affordance — the live
   // /study flow never resets a participant's running budget).
   const reset = useCallback(() => {
     setState(initialTimerState());
   }, []);
 
-  return { state, nowTick, grant, dismissWarning, reset, hydrated };
+  return { state, nowTick, grant, dismissWarning, dismissZero, reset, hydrated };
 }
 
 // Header display of the hard-bucket timer: TWO numbers — the current task's
@@ -1397,6 +1547,182 @@ function TimeWarningPopup({ onDismiss }: { onDismiss: () => void }) {
             className="border border-[var(--rule)] bg-[var(--foreground)] px-3 py-1.5 text-sm text-[var(--background)] hover:opacity-90"
           >
             Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Advisory at-0 popup (S2). Fires once per task when the CURRENT task's
+// `taskRemainingMs <= 0` — NO auto-advance, NO hard stop; the clock keeps
+// running negative and the participant works on. DISTINCT from the 2-minute
+// `TimeWarningPopup` (different copy, different vertical offset so the two never
+// occupy the same slot) and independently dismissible via its own
+// `zeroDismissed` flag. Rendered as a `fixed`, high-z sibling next to the
+// warning in SequentialParticipantFlow.
+function AtZeroPopup({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div className="fixed inset-x-0 top-32 z-[60] flex justify-center px-4">
+      <div className="max-w-md w-full border border-[var(--danger)] bg-[#fff5f5] shadow-xl px-5 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="text-sm font-semibold text-[var(--danger)]">
+            You&rsquo;ve reached your suggested time for this task
+          </h3>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="text-[var(--muted)] hover:text-[var(--foreground)] text-lg leading-none"
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+        <p className="mt-2 text-sm text-[var(--foreground)] leading-relaxed">
+          The suggested time for this task is up. This is just a guide — nothing
+          stops automatically, and you can keep working. When you&rsquo;re ready,
+          continue on to the next step at your own pace.
+        </p>
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="border border-[var(--rule)] bg-[var(--foreground)] px-3 py-1.5 text-sm text-[var(--background)] hover:opacity-90"
+          >
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ===================== Researcher → participant pushes ====================
+// Bridge so the `offer_help` push popup (rendered high in the tree, in
+// SequentialParticipantFlow) can OPEN the LLM assistant (whose controlled `open`
+// state lives deep inside TaskRunner). The push handler bumps a monotonically
+// increasing token via `requestOpen()`; TaskRunner subscribes and opens its
+// AssistantPanel whenever the token changes. A token (not a boolean) so repeated
+// `offer_help` pushes re-open the panel even after the participant closed it.
+type AssistantOpenSignal = {
+  // Changes each time a researcher push asks the assistant to open.
+  openToken: number;
+  // Call to request an open (no-op when there's no live subscriber, e.g. on a
+  // non-assisted module).
+  requestOpen: () => void;
+};
+
+const AssistantOpenContext = createContext<AssistantOpenSignal>({
+  openToken: 0,
+  requestOpen: () => {},
+});
+
+// Popup pushed by the researcher's "Show time remaining" button. Shows the
+// participant's OWN cumulative remaining time — computed LOCALLY from the timer
+// (the broadcast carries no number). Dismissible.
+function ShowTimePopup({
+  cumulativeRemainingMs,
+  onDismiss,
+}: {
+  cumulativeRemainingMs: number;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center px-4">
+      <button
+        type="button"
+        aria-hidden
+        tabIndex={-1}
+        onClick={onDismiss}
+        className="absolute inset-0 bg-black/30"
+      />
+      <div className="relative max-w-md w-full border border-[var(--rule)] bg-[var(--background)] shadow-2xl px-6 py-5">
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="text-base font-semibold">Time remaining</h3>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="text-[var(--muted)] hover:text-[var(--foreground)] text-lg leading-none"
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+        <p className="mt-3 text-sm text-[var(--foreground)] leading-relaxed">
+          You have approximately
+        </p>
+        <p className="mt-1 font-mono text-3xl tabular-nums tracking-tight">
+          {formatRemaining(cumulativeRemainingMs)}
+        </p>
+        <p className="mt-1 text-sm text-[var(--muted)] leading-relaxed">
+          remaining across the rest of the study.
+        </p>
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="border border-[var(--rule)] bg-[var(--foreground)] px-3 py-1.5 text-sm text-[var(--background)] hover:opacity-90"
+          >
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Popup pushed by the researcher's "Offer help" button. Offers to open the LLM
+// assistant; the button calls into the AssistantOpenContext to open the panel,
+// then dismisses.
+function OfferHelpPopup({
+  onOpenAssistant,
+  onDismiss,
+}: {
+  onOpenAssistant: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center px-4">
+      <button
+        type="button"
+        aria-hidden
+        tabIndex={-1}
+        onClick={onDismiss}
+        className="absolute inset-0 bg-black/30"
+      />
+      <div className="relative max-w-md w-full border border-[var(--rule)] bg-[var(--background)] shadow-2xl px-6 py-5">
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="text-base font-semibold">Need a hand?</h3>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="text-[var(--muted)] hover:text-[var(--foreground)] text-lg leading-none"
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+        <p className="mt-3 text-sm text-[var(--foreground)] leading-relaxed">
+          The researcher noticed you might be stuck. You can open the assistant
+          to ask a question about the task.
+        </p>
+        <div className="mt-4 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              onOpenAssistant();
+              onDismiss();
+            }}
+            className="border border-[var(--rule)] bg-[var(--foreground)] px-3 py-1.5 text-sm text-[var(--background)] hover:opacity-90"
+          >
+            Open assistant
+          </button>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="border border-[var(--rule)] bg-[var(--background)] px-3 py-1.5 text-sm text-[var(--foreground)] hover:opacity-90"
+          >
+            No thanks
           </button>
         </div>
       </div>
@@ -2223,10 +2549,26 @@ function TaskRunner({
     step.kind === 'scenario_retro'
       ? step.idx
       : null;
+  // Controlled assistant open state, so a researcher `offer_help` push (handled
+  // up in SequentialParticipantFlow) can open this deeply-nested panel. The
+  // context's `openToken` bumps on each push; when it changes we force `open`
+  // true. Done with React's "adjust state during render" pattern (not an
+  // effect) so the open is applied synchronously without a cascading re-render.
+  // The panel's own launcher/close still work via onOpenChange.
+  const assistantSignal = useContext(AssistantOpenContext);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [lastOpenToken, setLastOpenToken] = useState(assistantSignal.openToken);
+  if (assistantSignal.openToken !== lastOpenToken) {
+    setLastOpenToken(assistantSignal.openToken);
+    setAssistantOpen(true);
+  }
+
   const renderAssistant = () =>
     assistantOn ? (
       <AssistantPanel
         preview={participantId === null}
+        open={assistantOpen}
+        onOpenChange={setAssistantOpen}
         ctx={{
           moduleId: m.id,
           moduleType: m.type,
