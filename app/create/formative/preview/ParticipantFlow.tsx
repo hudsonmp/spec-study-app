@@ -632,8 +632,8 @@ function SequentialParticipantFlow({
   const pushes = useResearcherPushes({
     pid,
     participantId,
-    cumulativeRemainingMsNow: () =>
-      timerFromState(timer.state, Date.now()).cumulativeRemainingMs,
+    taskRemainingMsNow: () =>
+      timerFromState(timer.state, Date.now()).taskRemainingMs,
   });
 
   // Fire study_complete once when we reach past the last module.
@@ -709,7 +709,7 @@ function SequentialParticipantFlow({
       {showAtZero && <AtZeroPopup onDismiss={timer.dismissZero} />}
       {pushes.showTime && (
         <ShowTimePopup
-          cumulativeRemainingMs={pushes.showTimeCumulativeMs}
+          taskRemainingMs={pushes.showTimeTaskMs}
           onDismiss={pushes.dismissShowTime}
         />
       )}
@@ -743,23 +743,23 @@ function SequentialParticipantFlow({
 function useResearcherPushes({
   pid,
   participantId,
-  cumulativeRemainingMsNow,
+  taskRemainingMsNow,
 }: {
   pid: string | null;
   participantId: string | null;
   // Pulled lazily at receive time so the number is the participant's OWN
-  // cumulative remaining computed at Date.now() (the broadcast carries none).
-  cumulativeRemainingMsNow: () => number;
+  // CURRENT-TASK remaining computed at Date.now() (the broadcast carries none).
+  taskRemainingMsNow: () => number;
 }) {
   const [showTime, setShowTime] = useState(false);
-  const [showTimeCumulativeMs, setShowTimeCumulativeMs] = useState(0);
+  const [showTimeTaskMs, setShowTimeTaskMs] = useState(0);
   const [offerHelp, setOfferHelp] = useState(false);
 
   // Keep the latest callbacks in refs so the subscription effect can depend only
   // on `pid` (re-subscribing on every render-new closure would thrash the
   // socket).
-  const cumulativeRef = useRef(cumulativeRemainingMsNow);
-  cumulativeRef.current = cumulativeRemainingMsNow;
+  const taskRef = useRef(taskRemainingMsNow);
+  taskRef.current = taskRemainingMsNow;
   const participantIdRef = useRef(participantId);
   participantIdRef.current = participantId;
 
@@ -784,7 +784,7 @@ function useResearcherPushes({
         }).catch(() => {});
       }
       if (action === 'show_time') {
-        setShowTimeCumulativeMs(cumulativeRef.current());
+        setShowTimeTaskMs(taskRef.current());
         setShowTime(true);
       } else if (action === 'offer_help') {
         setOfferHelp(true);
@@ -805,7 +805,7 @@ function useResearcherPushes({
 
   return {
     showTime,
-    showTimeCumulativeMs,
+    showTimeTaskMs,
     offerHelp,
     dismissShowTime: () => setShowTime(false),
     dismissOfferHelp: () => setOfferHelp(false),
@@ -1618,13 +1618,13 @@ const AssistantOpenContext = createContext<AssistantOpenSignal>({
 });
 
 // Popup pushed by the researcher's "Show time remaining" button. Shows the
-// participant's OWN cumulative remaining time — computed LOCALLY from the timer
-// (the broadcast carries no number). Dismissible.
+// participant's OWN CURRENT-TASK (this scenario) remaining time — computed
+// LOCALLY from the timer (the broadcast carries no number). Dismissible.
 function ShowTimePopup({
-  cumulativeRemainingMs,
+  taskRemainingMs,
   onDismiss,
 }: {
-  cumulativeRemainingMs: number;
+  taskRemainingMs: number;
   onDismiss: () => void;
 }) {
   return (
@@ -1652,10 +1652,10 @@ function ShowTimePopup({
           You have approximately
         </p>
         <p className="mt-1 font-mono text-3xl tabular-nums tracking-tight">
-          {formatRemaining(cumulativeRemainingMs)}
+          {formatRemaining(taskRemainingMs)}
         </p>
         <p className="mt-1 text-sm text-[var(--muted)] leading-relaxed">
-          remaining across the rest of the study.
+          remaining on this task.
         </p>
         <div className="mt-4">
           <button
