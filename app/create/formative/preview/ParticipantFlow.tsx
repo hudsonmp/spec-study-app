@@ -297,6 +297,50 @@ function useLocalRecord(
   return [value, set];
 }
 
+// Parse a persisted module index, clamping into [0, total]. `total` (one past
+// the last module) is a valid value — it's the "Thank you" completion screen,
+// so a participant who finished and reloaded stays finished. A null, corrupt,
+// negative, or out-of-range value (e.g. the researcher shortened the study)
+// falls back to 0.
+export function clampStoredModuleIdx(raw: string | null, total: number): number {
+  if (raw === null) return 0;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(n, Math.max(0, total));
+}
+
+// Persist the participant's current module index so an accidental browser
+// reload resumes the module they were on — not the first screen. Their typed
+// work (spec, entities, retrospective answers) already survives via the
+// useLocal* field hooks; this restores their POSITION. Same hydrate-then-echo
+// shape as useLocalString, keyed under the shared `pf:<projectId>:` namespace.
+//
+// `hydrated` MUST gate the flow render: ModuleRunner fires `module_start` on
+// mount, so painting module 0 for even one frame before the stored index is
+// read would log a spurious module-0 start on every reload — and the analysis
+// tools derive the recording anchor from the EARLIEST module_start. Holding
+// render until hydrated keeps that anchor clean.
+function usePersistedModuleIdx(projectId: string, total: number) {
+  const key = `pf:${projectId}:module_idx`;
+  const [moduleIdx, setModuleIdx] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setModuleIdx(clampStoredModuleIdx(window.localStorage.getItem(key), total));
+    setHydrated(true);
+    // `total` is read once at mount for the clamp; we deliberately do not
+    // re-hydrate when it changes, which would fight live advancement.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    window.localStorage.setItem(key, String(moduleIdx));
+  }, [key, moduleIdx, hydrated]);
+
+  return { moduleIdx, setModuleIdx, hydrated };
+}
+
 function useSavedAt(): [string | null, () => void] {
   const [at, setAt] = useState<string | null>(null);
   function mark() {
@@ -525,8 +569,14 @@ function SequentialParticipantFlow({
   project: LoadedProject;
   participantId: string | null;
 }) {
-  const [moduleIdx, setModuleIdx] = useState(0);
   const total = project.content.modules.length;
+  // Resume the module the participant was on across an accidental reload (their
+  // typed work persists separately via the useLocal* hooks). `hydrated` gates
+  // the render below so module 0 never mounts before the stored index is read.
+  const { moduleIdx, setModuleIdx, hydrated } = usePersistedModuleIdx(
+    project.id,
+    total,
+  );
   const studyDoneFired = useRef(false);
 
   // Hard-bucket phase timer. Lives here (above the remounting ModuleRunner) and
@@ -544,6 +594,7 @@ function SequentialParticipantFlow({
   // Fire study_complete once when we reach past the last module.
   useEffect(() => {
     if (
+      hydrated &&
       participantId &&
       total > 0 &&
       moduleIdx >= total &&
@@ -552,7 +603,7 @@ function SequentialParticipantFlow({
       studyDoneFired.current = true;
       void finishStudyAction().catch(() => {});
     }
-  }, [participantId, total, moduleIdx]);
+  }, [hydrated, participantId, total, moduleIdx]);
 
   if (total === 0) {
     return (
@@ -566,6 +617,17 @@ function SequentialParticipantFlow({
             .
           </p>
         </Centered>
+      </Shell>
+    );
+  }
+
+  // Hold for one frame until the persisted module index is read. Mounting
+  // module 0's runner before then would fire a spurious `module_start` on
+  // every reload (see usePersistedModuleIdx), polluting the recording anchor.
+  if (!hydrated) {
+    return (
+      <Shell projectName={project.name} clock={clock}>
+        <Centered>{null}</Centered>
       </Shell>
     );
   }
