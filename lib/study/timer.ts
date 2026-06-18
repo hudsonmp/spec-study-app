@@ -161,8 +161,14 @@ export type TimerState = {
   // Number of scenarios in the task (set on first grant; lets the model sum the
   // phases-after budget without re-reading the module).
   scenarioCount: number;
-  // Whether the participant dismissed the 2-minute warning (used by S2).
+  // Whether the participant dismissed the 2-minute warning (S2). One-shot per
+  // task: it gates the auto warning so it shows once and doesn't re-pop each tick.
   warnedDismissed: boolean;
+  // Whether the participant dismissed the at-0 advisory popup (S2). DISTINCT
+  // from `warnedDismissed` — the at-0 popup is a separate, independently
+  // dismissible advisory that fires when `taskRemainingMs <= 0`, mirroring how
+  // `warnedDismissed` gates the 2-minute warning so neither re-pops every tick.
+  zeroDismissed: boolean;
 };
 
 export function initialTimerState(): TimerState {
@@ -171,6 +177,7 @@ export function initialTimerState(): TimerState {
     countedKeys: [],
     scenarioCount: 0,
     warnedDismissed: false,
+    zeroDismissed: false,
   };
 }
 

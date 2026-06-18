@@ -54,5 +54,11 @@ export default async function StudyPage() {
     updated_at: shown.updated_at,
   };
 
-  return <ParticipantFlow project={project} participantId={user.id} />;
+  return (
+    <ParticipantFlow
+      project={project}
+      participantId={user.id}
+      pid={user.pid}
+    />
+  );
 }
