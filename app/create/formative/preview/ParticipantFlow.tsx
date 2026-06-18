@@ -21,7 +21,11 @@ import { toRoman } from '@/lib/study/roman';
 import {
   initialTimerState,
   grantScenario,
-  remainingMs,
+  grantRequirements,
+  requirementsKey,
+  scenarioKey,
+  timerFromState,
+  hasStarted,
   formatRemaining,
   WARN_THRESHOLD_MS,
   type TimerState,
@@ -55,6 +59,14 @@ import {
   DEFAULT_TASK_COPY,
   PERSON_PALETTE,
 } from '@/lib/types/study';
+
+// Carryover-timer grant descriptor: which phase the participant just ENTERED in
+// a REAL task. `scenarioCount` (the task's N) is carried so the timer model can
+// sum the budgets of the phases still ahead. Requirements is granted at the
+// `initial_spec` entry; each scenario at its `scenario_read` entry.
+type PhaseGrant =
+  | { kind: 'requirements'; moduleId: string; scenarioCount: number }
+  | { kind: 'scenario'; moduleId: string; idx: number; scenarioCount: number };
 
 // Random demo markers for the task-intro map (introduces the mechanic before
 // the real scenarios). Cars + people scattered across the map's landmarks.
@@ -517,13 +529,15 @@ function SequentialParticipantFlow({
   const total = project.content.modules.length;
   const studyDoneFired = useRef(false);
 
-  // Cumulative carryover timer. Lives here (above the remounting ModuleRunner)
-  // and persists to localStorage; scenario boundaries call `grant`.
+  // Hard-bucket phase timer. Lives here (above the remounting ModuleRunner) and
+  // persists to localStorage; phase boundaries (requirements + each scenario)
+  // call `grant`. The mm:ss display and the existing 2-minute warning derive
+  // from the per-task remaining (the auto-warning rewire + at-0 popup are S2).
   const timer = useCarryoverTimer(project.id);
-  const remaining = remainingMs(timer.state, timer.nowTick);
+  const { taskRemainingMs } = timerFromState(timer.state, timer.nowTick);
   const showWarning =
-    timer.state.startedAt !== null &&
-    remaining <= WARN_THRESHOLD_MS &&
+    hasStarted(timer.state) &&
+    taskRemainingMs <= WARN_THRESHOLD_MS &&
     !timer.state.warnedDismissed;
   const clock = <CarryoverClock state={timer.state} now={timer.nowTick} />;
 
@@ -589,7 +603,7 @@ function SequentialParticipantFlow({
         module={m}
         moduleNumber={moduleIdx + 1}
         total={total}
-        onScenarioEnter={timer.grant}
+        onPhaseEnter={timer.grant}
         onComplete={() => setModuleIdx((i) => i + 1)}
       />
     </Shell>
@@ -754,10 +768,10 @@ function PreviewParticipantFlow({
   // under a preview-scoped key so it never collides with a live run in the
   // same browser. Resettable from the header (re-previews are common).
   const timer = useCarryoverTimer(`preview:${project.id}`);
-  const remaining = remainingMs(timer.state, timer.nowTick);
+  const { taskRemainingMs } = timerFromState(timer.state, timer.nowTick);
   const showWarning =
-    timer.state.startedAt !== null &&
-    remaining <= WARN_THRESHOLD_MS &&
+    hasStarted(timer.state) &&
+    taskRemainingMs <= WARN_THRESHOLD_MS &&
     !timer.state.warnedDismissed;
   const clock = (
     <span className="flex items-center gap-1.5">
@@ -868,7 +882,7 @@ function PreviewParticipantFlow({
           moduleNumber={moduleIdx + 1}
           total={content.modules.length}
           onComplete={advance}
-          onScenarioEnter={timer.grant}
+          onPhaseEnter={timer.grant}
           controlled
           onAdvance={advance}
           initialScreen={screen}
@@ -1165,22 +1179,34 @@ function useCarryoverTimer(projectId: string) {
   const [hydrated, setHydrated] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
 
-  // Hydrate once from localStorage.
+  // Hydrate once from localStorage (hard-bucket shape: per-phase start
+  // instants + counted keys + scenarioCount). Defensive against a stale blob
+  // from the prior pooled-clock shape — unknown/missing fields fall back to a
+  // fresh state.
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(storageKey);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<TimerState>;
+        const ps = parsed.phaseStartsMs;
         setState({
-          startedAt:
-            typeof parsed.startedAt === 'number' ? parsed.startedAt : null,
-          scenariosEntered:
-            typeof parsed.scenariosEntered === 'number'
-              ? parsed.scenariosEntered
-              : 0,
+          phaseStartsMs: {
+            requirements:
+              ps && typeof ps.requirements === 'number'
+                ? ps.requirements
+                : undefined,
+            scenarios:
+              ps && Array.isArray(ps.scenarios)
+                ? ps.scenarios.map((s) =>
+                    typeof s === 'number' ? s : undefined,
+                  )
+                : [],
+          },
           countedKeys: Array.isArray(parsed.countedKeys)
             ? parsed.countedKeys.filter((k): k is string => typeof k === 'string')
             : [],
+          scenarioCount:
+            typeof parsed.scenarioCount === 'number' ? parsed.scenarioCount : 0,
           warnedDismissed: !!parsed.warnedDismissed,
         });
       }
@@ -1207,8 +1233,24 @@ function useCarryoverTimer(projectId: string) {
     return () => clearInterval(id);
   }, []);
 
-  const grant = useCallback((key: string) => {
-    setState((prev) => grantScenario(prev, key));
+  // Stamp the entered phase's start the first time it's entered. Idempotent per
+  // key (re-mounts / back-nav don't re-stamp). Requirements + scenarios both go
+  // through here; the model derives the two numbers from the recorded starts.
+  const grant = useCallback((g: PhaseGrant) => {
+    setState((prev) =>
+      g.kind === 'requirements'
+        ? grantRequirements(
+            prev,
+            requirementsKey(g.moduleId),
+            g.scenarioCount,
+          )
+        : grantScenario(
+            prev,
+            scenarioKey(g.moduleId, g.idx),
+            g.idx,
+            g.scenarioCount,
+          ),
+    );
   }, []);
 
   const dismissWarning = useCallback(() => {
@@ -1226,8 +1268,13 @@ function useCarryoverTimer(projectId: string) {
   return { state, nowTick, grant, dismissWarning, reset, hydrated };
 }
 
-// Header display of the carryover timer: mm:ss remaining, RED + leading "-"
-// once over the suggested budget. The clock keeps counting past zero.
+// Header display of the hard-bucket timer: TWO numbers — the current task's
+// remaining ("Task") and the whole-study remaining ("Total"). Both are mm:ss,
+// display-clamped at 00:00; the Task number goes RED + leading "-" once the
+// current task is over its budget (the underlying value stays signed — used by
+// the S2 warning/at-0 popup). At rest (no phase entered) the numbers come from
+// the model (requirements budget + the whole-study budget), NOT a hardcoded
+// literal — they reflect the actual configured budgets.
 function CarryoverClock({
   state,
   now,
@@ -1235,32 +1282,24 @@ function CarryoverClock({
   state: TimerState;
   now: number;
 }) {
-  if (state.startedAt === null) {
-    // Before the first scenario, show the budget at rest (no countdown yet).
-    return (
-      <span
-        className="font-mono text-xs text-[var(--muted)] tabular-nums"
-        aria-label="Time remaining"
-        title="Suggested time remaining"
-      >
-        15:00
-      </span>
-    );
-  }
-  const rem = remainingMs(state, now);
-  const over = rem < 0;
-  const warn = rem <= WARN_THRESHOLD_MS;
+  const { taskRemainingMs, cumulativeRemainingMs } = timerFromState(state, now);
+  const over = taskRemainingMs < 0;
+  const warn = taskRemainingMs <= WARN_THRESHOLD_MS;
+  const taskStr = (over ? '-' : '') + formatRemaining(taskRemainingMs);
+  const totalStr = formatRemaining(cumulativeRemainingMs);
   return (
     <span
-      className={
-        'font-mono text-xs tabular-nums ' +
-        (warn ? 'text-[var(--danger)] font-semibold' : 'text-[var(--muted)]')
-      }
-      aria-label="Time remaining"
-      title="Suggested time remaining (you may go over)"
+      className="font-mono text-xs tabular-nums text-[var(--muted)]"
+      aria-label={`Task time remaining ${taskStr}, total time remaining ${totalStr}`}
+      title="Current task remaining · total study remaining (you may go over a task)"
     >
-      {over ? '-' : ''}
-      {formatRemaining(rem)}
+      <span className={warn ? 'text-[var(--danger)] font-semibold' : undefined}>
+        Task {taskStr}
+      </span>
+      <span aria-hidden className="mx-1.5 text-[var(--rule)]">
+        ·
+      </span>
+      <span>Total {totalStr}</span>
     </span>
   );
 }
@@ -1383,7 +1422,7 @@ function ModuleRunner({
   moduleNumber,
   total,
   onComplete,
-  onScenarioEnter,
+  onPhaseEnter,
   controlled = false,
   onAdvance,
   initialScreen,
@@ -1394,9 +1433,9 @@ function ModuleRunner({
   moduleNumber: number;
   total: number;
   onComplete: () => void;
-  // Carryover-timer hook: fired with a unique key each time the participant
-  // enters a scenario in a real task module, to grant that scenario's budget.
-  onScenarioEnter?: (key: string) => void;
+  // Hard-bucket timer hook: fired each time the participant ENTERS a budgeted
+  // phase (requirements + each scenario) in a real task module.
+  onPhaseEnter?: (g: PhaseGrant) => void;
   // Controlled (preview) mode: each Continue calls onAdvance instead of
   // mutating internal step state; the parent re-mounts with the next screen.
   controlled?: boolean;
@@ -1473,7 +1512,7 @@ function ModuleRunner({
         isWarmup={m.type === 'task_warmup'}
         save={save}
         onComplete={complete}
-        onScenarioEnter={onScenarioEnter}
+        onPhaseEnter={onPhaseEnter}
         initialStep={initialScreen ? screenToTaskStep(initialScreen) : undefined}
         controlled={controlled}
         onAdvance={onAdvance}
@@ -1865,7 +1904,7 @@ function TaskRunner({
   isWarmup,
   save,
   onComplete,
-  onScenarioEnter,
+  onPhaseEnter,
   initialStep,
   controlled = false,
   onAdvance,
@@ -1878,8 +1917,10 @@ function TaskRunner({
   isWarmup: boolean;
   save: SaveAdapter;
   onComplete: () => void;
-  // Carryover-timer grant: fired once per scenario entered in a REAL task.
-  onScenarioEnter?: (key: string) => void;
+  // Hard-bucket timer grant: fired once when the participant ENTERS the
+  // requirements phase (initial_spec) and once per scenario (scenario_read),
+  // in a REAL task only.
+  onPhaseEnter?: (g: PhaseGrant) => void;
   // Preview-mode hooks: see ThinkAloudWarmupRunner for semantics.
   initialStep?: TaskStep;
   controlled?: boolean;
@@ -1891,20 +1932,34 @@ function TaskRunner({
 
   const [step, setStep] = useState<TaskStep>(initialStep ?? { kind: 'intro' });
 
-  // Carryover timer: grant a 15-minute budget the first time the participant
-  // enters each scenario in the REAL task (type 'task'). Warmup scenarios are
-  // practice and don't consume the participant's task budget. `grant` is
-  // idempotent per key, so back-navigation / re-mounts don't double-count.
-  // Fires on the scenario_read entry beat.
+  // Hard-bucket timer grants. In the REAL task (type 'task') each phase's clock
+  // starts when its first screen is ENTERED: the REQUIREMENTS phase at the
+  // `initial_spec` beat, each SCENARIO phase at its `scenario_read` beat. Warmup
+  // scenarios are practice and don't consume the participant's budget. Grants
+  // are idempotent per key, so back-navigation / re-mounts don't double-stamp.
+  const grantedRequirementsRef = useRef(false);
   const grantedScenarioRef = useRef<Set<number>>(new Set());
   useEffect(() => {
     if (m.type !== 'task') return;
-    if (!onScenarioEnter) return;
-    if (step.kind !== 'scenario_read') return;
-    if (grantedScenarioRef.current.has(step.idx)) return;
-    grantedScenarioRef.current.add(step.idx);
-    onScenarioEnter(`${m.id}:${step.idx}`);
-  }, [m.type, m.id, step, onScenarioEnter]);
+    if (!onPhaseEnter) return;
+    const scenarioCount = t.scenarios.length;
+    if (step.kind === 'initial_spec') {
+      if (grantedRequirementsRef.current) return;
+      grantedRequirementsRef.current = true;
+      onPhaseEnter({ kind: 'requirements', moduleId: m.id, scenarioCount });
+      return;
+    }
+    if (step.kind === 'scenario_read') {
+      if (grantedScenarioRef.current.has(step.idx)) return;
+      grantedScenarioRef.current.add(step.idx);
+      onPhaseEnter({
+        kind: 'scenario',
+        moduleId: m.id,
+        idx: step.idx,
+        scenarioCount,
+      });
+    }
+  }, [m.type, m.id, step, onPhaseEnter, t.scenarios.length]);
 
   const [spec, setSpec] = useLocalString(`pf:${projectId}:${m.id}:spec`);
   const [entities, setEntities] = useLocalEntities(
