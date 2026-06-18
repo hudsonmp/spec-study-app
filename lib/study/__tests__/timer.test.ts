@@ -41,7 +41,7 @@ describe('budget constants match the cross-repo contract', () => {
   });
 });
 
-describe('computeTimer — hard-bucket, no-carryover model (shared fixtures)', () => {
+describe('computeTimer — advisory buckets + carryover pool (shared fixtures)', () => {
   for (const c of TIMER_CASES) {
     it(c.name, () => {
       const out = computeTimer(inputFor(c));
@@ -53,11 +53,22 @@ describe('computeTimer — hard-bucket, no-carryover model (shared fixtures)', (
 });
 
 describe('computeTimer — invariants beyond the named fixtures', () => {
-  it('cumulativeRemainingMs is never negative (floored at 0)', () => {
+  it('cumulativeRemainingMs is the carryover pool — signed, goes negative once the whole budget is spent', () => {
+    // On the named fixtures the pool is still positive (finite numbers).
     for (const c of TIMER_CASES) {
       const out = computeTimer(inputFor(c));
-      expect(out.cumulativeRemainingMs).toBeGreaterThanOrEqual(0);
+      expect(Number.isFinite(out.cumulativeRemainingMs)).toBe(true);
     }
+    // Spend the whole pool + 1 min → cumulative is NEGATIVE. The model is NOT
+    // floored (carryover); only the mm:ss display clamps at 0.
+    const total = REQUIREMENTS_BUDGET_MS + 1 * SCENARIO_BUDGET_MS;
+    const spent = computeTimer({
+      budgets: { requirementsMs: REQUIREMENTS_BUDGET_MS, scenarioMs: SCENARIO_BUDGET_MS },
+      scenarioCount: 1,
+      phaseStartsMs: { requirements: 0, scenarios: [REQUIREMENTS_BUDGET_MS] },
+      nowMs: total + 60_000,
+    });
+    expect(spent.cumulativeRemainingMs).toBe(-60_000);
   });
 
   it('taskRemainingMs keeps its sign (overrun cases go negative)', () => {
@@ -77,11 +88,14 @@ describe('computeTimer — invariants beyond the named fixtures', () => {
       scenarioCount: 2,
       phaseStartsMs: { requirements: 0, scenarios: [100, 200] },
       nowMs: 200,
-      // ^ now == scenario1 start → task = full scenario budget, no phases after.
+      // ^ now == scenario1 start → task = full scenario budget. Cumulative is the
+      //   carryover pool: totalBudget − (now − firstPhaseStart) = (R + 2S) − 200.
     });
     expect(out.currentPhase).toEqual({ kind: 'scenario', idx: 1 });
     expect(out.taskRemainingMs).toBe(SCENARIO_BUDGET_MS);
-    expect(out.cumulativeRemainingMs).toBe(SCENARIO_BUDGET_MS);
+    expect(out.cumulativeRemainingMs).toBe(
+      REQUIREMENTS_BUDGET_MS + 2 * SCENARIO_BUDGET_MS - 200,
+    );
   });
 
   it('before requirements is entered, no phase has started (idle clock)', () => {
