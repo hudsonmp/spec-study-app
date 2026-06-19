@@ -36,6 +36,13 @@ import {
   parseRetroQuestionPayload,
   type PushAction,
 } from '@/lib/study/push';
+import {
+  resolveEffectiveRetro,
+  freezeRetroList,
+  retroListForStep,
+  isRetroQuestionInRange,
+  type RetroItem,
+} from '@/lib/study/retro';
 import { getBrowserClient } from '@/lib/supabase/browser';
 import type {
   LoadedProject,
@@ -2338,7 +2345,14 @@ type TaskStep =
   | { kind: 'scenario_read'; idx: number }
   | { kind: 'scenario_ponder'; idx: number }
   | { kind: 'scenario_revise'; idx: number }
-  | { kind: 'scenario_retro'; idx: number; qIdx: number }
+  // `list` is the FROZEN effective retro list for this scenario, snapshotted at
+  // the instant the participant ENTERS the retro (see `leaveScenario`). Both the
+  // render and `next()` read THIS, never the live `retroQueue`, so a question
+  // broadcast mid-retro can't shrink/replace the in-progress list (participant-
+  // data-integrity, CRITICAL). Optional: the controlled/preview path builds this
+  // step via `screenToTaskStep` with no snapshot and falls back to a live
+  // resolve (no live queue there, so the authored set is stable).
+  | { kind: 'scenario_retro'; idx: number; qIdx: number; list?: RetroItem[] }
   | { kind: 'outro' };
 
 function stepLabel(s: TaskStep): string {
@@ -2392,29 +2406,33 @@ function TaskRunner({
   const t: TaskContent = m;
   // Per-scenario retrospective applies to the REAL task only, not the warmup.
   // `authoredRetro` is the static set from the project. The EFFECTIVE retro for
-  // a given scenario (below) is the researcher-queued questions if any, else
-  // this authored set — both the render and the step machine must use the
-  // effective list so queued questions become real steps.
-  // Memoized so its identity is stable across renders (it feeds the memoized
-  // `effectiveRetroFor` below; a fresh array each render would defeat that).
+  // a given scenario is the researcher-queued questions if any, else this
+  // authored set — RESOLVED ONCE at retro entry and then FROZEN onto the step
+  // (see `leaveScenario`); the render and `next()` read that frozen snapshot.
+  // Memoized so its identity is stable across renders (a fresh array each render
+  // would defeat the memoization of dependents).
   const authoredRetro = useMemo(
     () => (m.type === 'task' ? t.perScenarioRetrospective ?? [] : []),
     [m.type, t.perScenarioRetrospective],
   );
-  // Per-scenario effective retro list. Queued questions (broadcast by the
-  // researcher's /live screen DURING the scenario, before its retro step is
-  // reached) override the authored ones for THAT scenario only; an empty/absent
-  // queue falls back to the authored set. Mapped to `{ text }` so the render is
-  // uniform across queued (string) and authored (RetrospectiveItem) sources.
-  // NOTE: queued questions arriving AFTER a scenario's retro step is passed are
-  // not applied retroactively (the step machine has already advanced past it) —
-  // they take effect only for a not-yet-reached scenario. No rewind is attempted.
+  // FREEZE-AT-ENTRY contract (participant-data-integrity, CRITICAL): queued
+  // questions broadcast by the researcher's /live screen DURING a scenario
+  // (BEFORE its retro is entered) override the authored set for THAT scenario;
+  // an empty/absent queue falls back to authored. The override is captured ONCE
+  // when the retro is entered and carried immutably on the step. A question
+  // arriving AFTER a scenario's retro is ENTERED does NOT change that scenario's
+  // in-progress list (no shrink, no crash, no answerKey collision) — it only
+  // affects scenarios whose retro is entered later. No rewind is attempted.
+  // LIVE resolve of the effective list for a scenario. ONLY for at-entry-time
+  // decisions: whether a scenario HAS a retro (`leaveScenario`) and the
+  // `scenario_revise` isLast hint — both legitimately read the current queue
+  // BEFORE entering the retro. Once the retro is ENTERED the list is FROZEN onto
+  // the step (see `leaveScenario` → `freezeRetroList`); the render and `next()`
+  // read that frozen snapshot, NOT this, so a mid-retro broadcast can't mutate
+  // an in-progress scenario's list.
   const effectiveRetroFor = useCallback(
-    (scenarioIdx: number): { text: string }[] => {
-      const queued = retroQueue?.[scenarioIdx];
-      if (queued && queued.length > 0) return queued.map((text) => ({ text }));
-      return authoredRetro.map((q) => ({ text: q.text }));
-    },
+    (scenarioIdx: number): RetroItem[] =>
+      resolveEffectiveRetro(retroQueue, authoredRetro, scenarioIdx),
     // retroQueue is a fresh object on each receipt, so depending on it re-derives
     // the override the moment a question arrives; authoredRetro is memoized stable.
     [retroQueue, authoredRetro],
@@ -2465,6 +2483,29 @@ function TaskRunner({
   useEffect(() => {
     reportCurrentScenario?.(currentScenarioIdx);
   }, [reportCurrentScenario, currentScenarioIdx]);
+
+  // DEAD-GUARD recovery (hardening). If we ever land on a `scenario_retro` step
+  // whose `qIdx` is out of range of its (frozen) list — e.g. a malformed
+  // `initialStep`, or any future regression — advance via the NORMAL
+  // scenario-completion path in an EFFECT, never by calling `onComplete()` as a
+  // render side effect (the original bug, which skipped the ENTIRE task). With
+  // the freeze in place this is unreachable in the live flow; it's a safety net.
+  const retroDead =
+    step.kind === 'scenario_retro' &&
+    !isRetroQuestionInRange(
+      retroListForStep(step, retroQueue, authoredRetro),
+      step.qIdx,
+    );
+  const retroDeadIdx = step.kind === 'scenario_retro' ? step.idx : -1;
+  useEffect(() => {
+    if (!retroDead) return;
+    // Move past this scenario's retro the orderly way (next scenario, or
+    // end-of-task → outro/complete). Runs once per dead step.
+    afterScenario(retroDeadIdx);
+    // afterScenario is a stable hoisted declaration; we intentionally key the
+    // effect on the dead condition + scenario index, not the closure identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [retroDead, retroDeadIdx]);
 
   const [spec, setSpec] = useLocalString(`pf:${projectId}:${m.id}:spec`);
   const [entities, setEntities] = useLocalEntities(
@@ -2591,11 +2632,16 @@ function TaskRunner({
       value: entitiesJson,
     });
     save.snapshot('after_scenario', idx, spec, entitiesJson);
-    // Effective retro for THIS scenario: queued questions if any, else authored.
-    // Resolved at the moment we leave the scenario, so any questions broadcast
-    // during the scenario are already in the queue.
-    if (effectiveRetroFor(idx).length > 0) {
-      return transitionTo({ kind: 'scenario_retro', idx, qIdx: 0 });
+    // FREEZE the effective retro list for THIS scenario at the instant we enter
+    // its retro. Snapshot = queued questions if any (broadcast during the
+    // scenario, before now), else the authored set. This frozen list is carried
+    // on the step for the entire retro; the render and `next()` read it, never
+    // the live `retroQueue` — so a `retro_question` arriving DURING this
+    // scenario's retro can't shrink/replace the in-progress list (no strand, no
+    // key collision). It only affects scenarios whose retro is entered LATER.
+    const list = freezeRetroList(retroQueue, authoredRetro, idx);
+    if (list.length > 0) {
+      return transitionTo({ kind: 'scenario_retro', idx, qIdx: 0, list });
     }
     return afterScenario(idx);
   }
@@ -2630,13 +2676,17 @@ function TaskRunner({
     if (step.kind === 'scenario_revise') return leaveScenario(step.idx);
     if (step.kind === 'scenario_retro') {
       const nextQ = step.qIdx + 1;
-      // Step count follows the EFFECTIVE list for this scenario, so queued
-      // questions advance through all of them before moving to the next scenario.
-      if (nextQ < effectiveRetroFor(step.idx).length) {
+      // Step count follows the FROZEN list captured at retro entry (carried on
+      // `step.list`), NOT the live queue — so a mid-retro broadcast can't change
+      // how many questions this scenario has. We carry the SAME frozen list
+      // forward so every question in this scenario sees one immutable list.
+      const list = retroListForStep(step, retroQueue, authoredRetro);
+      if (nextQ < list.length) {
         return transitionTo({
           kind: 'scenario_retro',
           idx: step.idx,
           qIdx: nextQ,
+          list: step.list,
         });
       }
       return afterScenario(step.idx);
@@ -2819,13 +2869,16 @@ function TaskRunner({
   }
 
   if (step.kind === 'scenario_retro') {
-    // Effective list for THIS scenario drives both the active question and the
-    // total: queued (researcher) questions override the authored set; the step
-    // count (qIdx range) was generated from this same length in the step machine.
-    const effectiveRetro = effectiveRetroFor(step.idx);
+    // FROZEN list for THIS scenario drives both the active question and the
+    // total. It was snapshotted at retro entry (`leaveScenario`) and carried on
+    // `step.list`; we read it here, NEVER the live `retroQueue` — so a question
+    // broadcast mid-retro can't shrink/replace it under the participant.
+    const effectiveRetro = retroListForStep(step, retroQueue, authoredRetro);
     const q = effectiveRetro[step.qIdx];
     if (!q) {
-      onComplete();
+      // Out of range (should be unreachable with the freeze). Do NOT call
+      // onComplete() here — that skips the whole task. The dead-guard effect
+      // above advances via the normal scenario-completion path; render nothing.
       return null;
     }
     const answerKey = `${step.idx}:${step.qIdx}`;
