@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getResearcherSession } from '@/lib/auth/researcher';
+import RegisterUnlock from '@/app/RegisterUnlock';
 
 export default async function Home() {
   const [user, researcher] = await Promise.all([
@@ -103,24 +104,36 @@ export default async function Home() {
 
         <section className="space-y-6">
           <p className="text-[15px] leading-relaxed">
-            This platform supports a research study on specification design.
-            New participants register with their name and email and receive a
-            three-digit Participant ID; returning participants sign in with
-            their PID and email.
+            This platform supports a research study on specification design. Try
+            the interactive demo to walk through the task with no account — or,
+            if you&rsquo;re an enrolled participant, create an account or sign in.
           </p>
 
-          <div className="grid grid-cols-2 gap-3 pt-2">
-            <Link
-              href="/register"
-              className="block text-center border border-[var(--foreground)] py-3 hover:bg-[var(--foreground)] hover:text-[var(--background)] transition"
-            >
-              Register
-            </Link>
+          {/* Primary CTA: the public demo. No sign-up, warmups skipped, and
+              nothing is saved. */}
+          <Link
+            href="/demo"
+            className="block text-center border border-[var(--foreground)] bg-[var(--foreground)] text-[var(--background)] py-3 hover:opacity-90 transition font-medium"
+          >
+            Try the interactive demo
+          </Link>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+            {/* Real account creation is password-gated (server-enforced) so
+                demo traffic can't register into the live study. */}
+            <RegisterUnlock />
             <Link
               href="/login"
-              className="block text-center border border-[var(--foreground)] py-3 hover:bg-[var(--foreground)] hover:text-[var(--background)] transition"
+              className="border border-[var(--rule)] p-4 flex flex-col gap-2 hover:border-[var(--foreground)] transition"
             >
-              Log in
+              <span className="text-sm font-medium tracking-tight">Log in</span>
+              <span className="text-xs text-[var(--muted)]">
+                Returning participants sign in with their three-digit PID and
+                email.
+              </span>
+              <span className="mt-1 w-full text-center border border-[var(--foreground)] py-2">
+                Sign in
+              </span>
             </Link>
           </div>
 

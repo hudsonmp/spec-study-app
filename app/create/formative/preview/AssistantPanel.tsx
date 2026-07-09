@@ -35,6 +35,7 @@ const PANEL_H = 460;
 export default function AssistantPanel({
   ctx,
   preview = false,
+  demo = false,
   open: openProp,
   onOpenChange,
 }: {
@@ -42,6 +43,9 @@ export default function AssistantPanel({
   // Researcher preview: the route authorizes via the researcher session and
   // skips the per-participant transcript writes.
   preview?: boolean;
+  // Public demo: the launcher/panel still render so a visitor sees the
+  // assistant exists, but it is inert — no model call, composer disabled.
+  demo?: boolean;
   // Controlled open state (optional). When `open`/`onOpenChange` are supplied
   // the panel is driven by the parent — used so a researcher `offer_help` push
   // can open the assistant from outside this component. When omitted the panel
@@ -123,6 +127,8 @@ export default function AssistantPanel({
   );
 
   async function send() {
+    // Inert in the demo — no model call, no transcript.
+    if (demo) return;
     const text = input.trim();
     if (!text || busy) return;
     setError(null);
@@ -206,7 +212,9 @@ export default function AssistantPanel({
         onPointerUp={onHeaderPointerUp}
         className="flex cursor-grab items-center justify-between gap-2 border-b border-[var(--rule)] bg-[var(--panel)] px-3 py-2 select-none active:cursor-grabbing"
       >
-        <span className="text-sm font-medium tracking-tight">Help assistant</span>
+        <span className="text-sm font-medium tracking-tight">
+          Help assistant{demo && <span className="text-[var(--muted)] font-normal"> · not active in demo</span>}
+        </span>
         <button
           type="button"
           data-no-drag
@@ -222,12 +230,21 @@ export default function AssistantPanel({
         ref={scrollRef}
         className="flex-1 overflow-y-auto p-3 flex flex-col gap-3 text-sm"
       >
-        {turns.length === 0 && (
+        {demo ? (
           <p className="text-[var(--muted)] italic leading-relaxed">
-            Ask a targeted question about the task — a term, the Given/When/Then
-            format, or what your own stated rules imply in a situation you
-            describe.
+            This is a demo — the help assistant is shown for context but is
+            <span className="not-italic font-medium"> not active</span>. In the
+            real study, participants can ask it targeted questions about the
+            task here.
           </p>
+        ) : (
+          turns.length === 0 && (
+            <p className="text-[var(--muted)] italic leading-relaxed">
+              Ask a targeted question about the task — a term, the
+              Given/When/Then format, or what your own stated rules imply in a
+              situation you describe.
+            </p>
+          )
         )}
         {turns.map((t, i) => (
           <div
@@ -251,17 +268,18 @@ export default function AssistantPanel({
 
       <div className="border-t border-[var(--rule)] p-2 flex items-end gap-2">
         <textarea
-          value={input}
+          value={demo ? '' : input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onInputKeyDown}
+          disabled={demo}
           rows={2}
-          placeholder="Ask a question…"
-          className="flex-1 resize-none border border-[var(--rule)] bg-white px-2 py-1 text-sm focus:outline-none focus:border-[var(--accent)]"
+          placeholder={demo ? 'Not active in the demo' : 'Ask a question…'}
+          className="flex-1 resize-none border border-[var(--rule)] bg-white px-2 py-1 text-sm focus:outline-none focus:border-[var(--accent)] disabled:opacity-60 disabled:cursor-not-allowed"
         />
         <button
           type="button"
           onClick={() => void send()}
-          disabled={busy || !input.trim()}
+          disabled={demo || busy || !input.trim()}
           className="border border-[var(--rule)] bg-[var(--foreground)] px-3 py-1.5 text-sm text-[var(--background)] disabled:opacity-40"
         >
           Send

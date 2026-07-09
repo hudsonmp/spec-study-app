@@ -548,6 +548,7 @@ export default function ParticipantFlow({
   participantId = null,
   pid = null,
   previewMode = false,
+  demoMode = false,
   scripts,
   referenceScript = '',
 }: {
@@ -562,6 +563,10 @@ export default function ParticipantFlow({
   // remount on screen change instead of advancing internal state. NEVER
   // pass true on the live /study route — it disables sequential persistence.
   previewMode?: boolean;
+  // Public demo run: renders the sequential flow but disables the help
+  // assistant and never persists (paired with participantId=null). NEVER pass
+  // true on the live /study route.
+  demoMode?: boolean;
   // Per-screen researcher scripts + SIGCSE reference — only used in preview
   // mode to render the script rail (the merged Follow-along view).
   scripts?: Record<string, string>;
@@ -581,6 +586,7 @@ export default function ParticipantFlow({
       project={project}
       participantId={participantId}
       pid={pid}
+      demoMode={demoMode}
     />
   );
 }
@@ -589,10 +595,12 @@ function SequentialParticipantFlow({
   project,
   participantId,
   pid,
+  demoMode = false,
 }: {
   project: LoadedProject;
   participantId: string | null;
   pid: string | null;
+  demoMode?: boolean;
 }) {
   const total = project.content.modules.length;
   // Resume the module the participant was on across an accidental reload (their
@@ -708,6 +716,7 @@ function SequentialParticipantFlow({
       moduleNumber={moduleIdx + 1}
       total={total}
       showSignOut={participantId !== null}
+      demoMode={demoMode}
       clock={clock}
     >
       {/* Fixed, high-z popup siblings. The auto 2-minute warning and the at-0
@@ -727,20 +736,22 @@ function SequentialParticipantFlow({
           onDismiss={pushes.dismissOfferHelp}
         />
       )}
-      <AssistantOpenContext.Provider value={assistantSignal}>
-        <ModuleRunner
-          key={m.id}
-          project={project}
-          participantId={participantId}
-          module={m}
-          moduleNumber={moduleIdx + 1}
-          total={total}
-          onPhaseEnter={timer.grant}
-          onComplete={() => setModuleIdx((i) => i + 1)}
-          retroQueue={pushes.retroQueue}
-          reportCurrentScenario={pushes.reportCurrentScenario}
-        />
-      </AssistantOpenContext.Provider>
+      <DemoModeContext.Provider value={demoMode}>
+        <AssistantOpenContext.Provider value={assistantSignal}>
+          <ModuleRunner
+            key={m.id}
+            project={project}
+            participantId={participantId}
+            module={m}
+            moduleNumber={moduleIdx + 1}
+            total={total}
+            onPhaseEnter={timer.grant}
+            onComplete={() => setModuleIdx((i) => i + 1)}
+            retroQueue={pushes.retroQueue}
+            reportCurrentScenario={pushes.reportCurrentScenario}
+          />
+        </AssistantOpenContext.Provider>
+      </DemoModeContext.Provider>
     </Shell>
   );
 }
@@ -1337,6 +1348,7 @@ function Shell({
   moduleNumber,
   total,
   showSignOut = false,
+  demoMode = false,
   previewControls,
   rail,
   fill = false,
@@ -1348,6 +1360,8 @@ function Shell({
   moduleNumber?: number;
   total?: number;
   showSignOut?: boolean;
+  // Public demo: render a header badge making clear nothing is saved.
+  demoMode?: boolean;
   previewControls?: React.ReactNode;
   // Optional resizable rail to the right of the main content (preview only —
   // hosts the per-screen researcher script). Live /study never passes it.
@@ -1373,6 +1387,11 @@ function Shell({
           <h1 className="text-lg font-medium tracking-tight truncate">
             {projectName}
           </h1>
+          {demoMode && (
+            <span className="shrink-0 rounded-full border border-[var(--rule)] px-2 py-0.5 text-[10px] uppercase tracking-wider text-[var(--muted)]">
+              Demo · nothing is saved
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-4 flex-wrap">
           {moduleLabel && moduleNumber && total && (
@@ -1681,6 +1700,12 @@ const AssistantOpenContext = createContext<AssistantOpenSignal>({
   openToken: 0,
   requestOpen: () => {},
 });
+
+// True on the public /demo run. Provided at the SequentialParticipantFlow root
+// and read deep in TaskRunner so the help assistant renders (it "shows up") but
+// is disabled — the demo has no live model call and no per-participant
+// transcript. Defaults false (real /study, researcher preview).
+const DemoModeContext = createContext<boolean>(false);
 
 // Popup pushed by the researcher's "Show time remaining" button. Shows the
 // participant's OWN CURRENT-TASK (this scenario) remaining time — computed
@@ -2704,8 +2729,13 @@ function TaskRunner({
   // by isAssistantEnabled on the module title/type). The panel overlays the
   // spec area on the spec-bearing steps. `scenarioForAssistant` is the
   // scenario in scope on scenario steps.
+  // On the public demo there's no live session and no researcher preview, but
+  // the assistant must still SHOW (disabled) so visitors see it exists — so
+  // demoMode also switches it on. Disabling happens in AssistantPanel via
+  // `demo`.
+  const demoMode = useContext(DemoModeContext);
   const assistantOn =
-    (participantId !== null || controlled) &&
+    (participantId !== null || controlled || demoMode) &&
     isAssistantEnabled({ moduleType: m.type, moduleTitle: t.title });
   const scenarioForAssistant =
     step.kind === 'scenario_read' ||
@@ -2739,6 +2769,7 @@ function TaskRunner({
     assistantOn ? (
       <AssistantPanel
         preview={participantId === null}
+        demo={demoMode}
         open={assistantOpen}
         onOpenChange={setAssistantOpen}
         ctx={{

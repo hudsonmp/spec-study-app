@@ -5,6 +5,8 @@ import { redirect } from 'next/navigation';
 import { createServiceRoleClient } from '@/lib/supabase/service';
 import { generatePid } from '@/lib/auth/pid';
 import { getParticipantSession } from '@/lib/auth/session';
+import { getRegisterUnlockSession } from '@/lib/auth/register-gate';
+import { getResearcherSession } from '@/lib/auth/researcher';
 
 const schema = z.object({
   first_name: z.string().trim().min(1, 'First name is required').max(60),
@@ -17,6 +19,21 @@ export async function registerAction(
   _prev: RegisterState,
   formData: FormData,
 ): Promise<RegisterState> {
+  // Registration gate: only visitors who cleared the landing-page password
+  // (unlock cookie) or an authenticated researcher piloting the flow may create
+  // a real account. This is the security boundary that keeps public demo
+  // traffic out of the live IRB `users` table; /demo needs none of it.
+  const [unlock, researcher] = await Promise.all([
+    getRegisterUnlockSession(),
+    getResearcherSession(),
+  ]);
+  if (unlock.ok !== true && researcher.ok !== true) {
+    return {
+      error:
+        'Registration is locked. Enter the study password on the home page to create an account.',
+    };
+  }
+
   const parsed = schema.safeParse({
     first_name: formData.get('first_name'),
     email: formData.get('email'),
